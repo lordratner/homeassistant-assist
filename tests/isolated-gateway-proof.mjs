@@ -26,6 +26,7 @@ const encoded = spawnSync("ffmpeg", ["-loglevel", "error", "-f", "lavfi", "-i", 
 assert.equal(encoded.status, 0, "ffmpeg synthetic audio fixture failed");
 const audio = await readFile(audioPath);
 const speechCalls = [];
+let ttsFailurePlan;
 let fixtureError;
 const model = createServer(async (req, res) => {
   try {
@@ -39,6 +40,16 @@ const model = createServer(async (req, res) => {
   }
   if (req.url === "/v1/audio/speech" || req.url.startsWith("/v1/text-to-speech/")) {
     speechCalls.push({ kind: "tts", request: JSON.parse(body) });
+    if (ttsFailurePlan) {
+      const request = JSON.parse(body), text = request.input ?? request.text;
+      ttsFailurePlan.attempts.push(text);
+      if (ttsFailurePlan.failNext) {
+        ttsFailurePlan.failNext = false; ttsFailurePlan.firstText = text;
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { code: "service_unavailable", message: "Synthetic transient speech fixture" } }));
+        return;
+      }
+    }
     res.writeHead(200, { "Content-Type": "audio/mpeg" });
     res.write(audio.subarray(0, Math.floor(audio.length / 2)));
     await delay(200);
@@ -366,12 +377,23 @@ try {
   assert.equal(forbidden.status, 401, "voice client cannot use owner-only proof control route");
   const haRoot = resolve("../home-assistant-openclaw-voice");
   const pairAudio = join(root, "paired-speech.wav");
+  const pairModelCalls = calls.length;
+  if (process.env.OPENCLAW_PROOF_SPEECH_RETRY === "1") ttsFailurePlan = { failNext: true, attempts: [] };
   const pairRun = await promisify(execFile)(join(haRoot, ".venv/bin/python"), [join(haRoot, "tests/native_pair_proof.py")], {
     env: { PATH: process.env.PATH, VOICE_PROOF_HA_PACKAGE_ROOT: process.env.OPENCLAW_PROOF_HA_PACKAGE_ROOT, VOICE_PROOF_URL: productionBase,
       VOICE_PROOF_TOKEN: productionClient.client_token, VOICE_PROOF_REVISION: productionClient.capabilities.profile_revision,
       VOICE_PROOF_OUTPUT: pairAudio }, timeout: 25000,
   });
   const pair = JSON.parse(pairRun.stdout);
+  let speechRetryProof;
+  if (ttsFailurePlan) {
+    assert.equal(ttsFailurePlan.attempts.filter((value) => value === ttsFailurePlan.firstText).length, 2,
+      "native HA TTS must recover the first sentence with exactly one native provider retry");
+    assert.equal(calls.length, pairModelCalls, "speech retry must never dispatch the conversation model");
+    speechRetryProof = { transient_http_status: 503, first_sentence_attempts: 2, native_ha_stream_recovered: true,
+      model_redispatches: 0, partial_replay: false };
+    ttsFailurePlan = undefined;
+  }
   assert.equal(pair.early_audio, true);
   assert.ok(pair.bytes > 44, "the canonical WAV must include decoded sample data");
   const decoded = spawnSync("ffmpeg", ["-loglevel", "error", "-i", pairAudio, "-f", "s16le", "-ar", "24000", "-ac", "1", "pipe:1"]);
@@ -474,7 +496,7 @@ try {
   console.log(JSON.stringify({ status: "passed", node: process.version, root, production: { ready: productionStatus.ready,
     normal_turn: true, retry_without_execution: true, paired_via_admin_rpc: true }, hostProbe, hostTurn, hostStt, calls: calls.length,
     models: calls.map((call) => call.model), reasoning: calls.map((call) => call.reasoning_effort),
-    events: events.map(({ stack, ...event }) => event), emissions, speech, speechCalls, pair, nativePipeline, continuationProof, realtimeSttProof, scopeProof, policyProof, lockedProof, hotSwitchProof, timingProof, loggingProof, productProof }, null, 2));
+    events: events.map(({ stack, ...event }) => event), emissions, speech, speechCalls, pair, nativePipeline, continuationProof, realtimeSttProof, scopeProof, policyProof, lockedProof, hotSwitchProof, timingProof, loggingProof, productProof, speechRetryProof }, null, 2));
 } catch (error) {
   await writeFile(join(root, "failed-proof.json"), JSON.stringify({ calls, emissions }, null, 2));
   console.error(String(error));

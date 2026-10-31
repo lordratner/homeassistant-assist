@@ -2,7 +2,7 @@
   "id": "openclaw-home-assistant",
   "name": "OpenClaw Home Assistant",
   "description": "Home Assistant STT, agent conversation and streaming-first TTS through OpenClaw",
-  "version": "0.0.1-dev.10",
+  "version": "0.0.1-dev.11",
   "contracts": {
     "tools": [
       "home_assistant",

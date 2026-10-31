@@ -260,3 +260,7 @@ existing selected Assist pipeline. Neither path changes preferred pipelines.
 Startup cleans at most512 generated `stt-XXXXXX` directories older than24h under
 this profile's private audio root. Recent work, symlinks and unrelated directories
 are left alone. This is bounded startup cleanup, not an offline24h deletion SLA.
+
+## Bounded speech execution retry (bridge dev.11 / HA dev.7)
+
+The wire protocol remains 1.2: retries are internal attempts of the same admitted speech job, not new request IDs or a conversation replay. HA retains its existing same-job status/replay recovery. One eligible extra finite STT or pre-output TTS attempt is owned by the bridge; native batch retries are not multiplied. See [speech reliability](SPEECH-RELIABILITY.md) for cancellation, selection pinning, timing and native SDK limits.

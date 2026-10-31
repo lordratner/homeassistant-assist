@@ -4,6 +4,7 @@
  * fallback. It never replays a partially delivered segment or an agent turn.
  */
 import { annotateFailure, failureSummary, resultFailure } from "./observability.mjs";
+import { SpeechRetry } from "./speech-retry.mjs";
 
 export class SpeechStreamError extends Error {
   constructor(code) { super(code); this.code = code; }
@@ -71,94 +72,127 @@ export async function* speechEvents(textStream, { host, signal, maxAudioBytes = 
       !Number.isInteger(maxChunkBytes) || maxChunkBytes < 1 || maxChunkBytes > 32768)
     throw new TypeError("invalid_audio_limits");
   let sequence = 0, segment = 0, totalAudio = 0, format;
-  let streamingUnsupported = false;
-  for await (const text of sentenceSegments(textStream, { ...textLimits, signal })) {
-    checkAbort(signal);
-    timing?.mark("first_synthesis_request");
-    timing?.segment("request", segment);
-    let result, reader, primaryFailure;
-    diagnostics?.event("tts", "segment", "started", { segments: segment });
-    const segmentStartBytes = totalAudio;
-    try {
-      if (!streamingUnsupported) {
-        result = await host.stream(text);
-        checkAbort(signal);
-        if (unsupported(result)) {
-          await result.release?.();
-          result = undefined;
-          streamingUnsupported = true;
-          diagnostics?.event("tts", "selection", "fallback", { reason: "unsupported_for_streaming", mode: "buffered" }, "info");
-        } else if (!result?.success) throw annotateFailure(new SpeechStreamError("synthesis_failed"),
-          resultFailure(result, { stage: "synthesis_request" }));
-      }
-      const mode = streamingUnsupported ? "sentence_buffered" : "sentence_progressive";
-      if (streamingUnsupported) result = await host.buffer(text);
+  let streamingUnsupported = false, failure;
+  const retry = new SpeechRetry({ kind: "tts", signal, diagnostics, timing });
+  const releaseLate = async (value) => {
+    try { await value?.audioStream?.cancel(); } finally { await value?.release?.(); }
+  };
+  try {
+    for await (const text of sentenceSegments(textStream, { ...textLimits, signal })) {
       checkAbort(signal);
-      if (!result?.success) throw annotateFailure(new SpeechStreamError("synthesis_failed"),
-        resultFailure(result, { stage: "synthesis_request" }));
-      if (!result.outputFormat || !result.fileExtension) throw new SpeechStreamError("missing_audio_format");
-      const nextFormat = JSON.stringify([result.outputFormat, result.fileExtension]);
-      if (format && format !== nextFormat && !allowFormatChange) throw new SpeechStreamError("audio_format_changed");
-      format = nextFormat;
-      yield { type: "audio_start", sequence: ++sequence, segment, mode,
-        output_format: result.outputFormat, extension: result.fileExtension.replace(/^\./, ""),
-        provider: result.provider, model: result.providerModel };
-      const emitBytes = function* (bytes) {
-        if (!(bytes instanceof Uint8Array)) throw new SpeechStreamError("invalid_audio_chunk");
-        if (bytes.length) { timing?.mark("first_source_audio"); timing?.segment("source_audio", segment); }
-        totalAudio += bytes.length;
-        if (totalAudio > maxAudioBytes) throw new SpeechStreamError("audio_limit");
-        for (const part of boundedBytes(bytes, maxChunkBytes)) {
-          checkAbort(signal);
-          yield { type: "audio_chunk", sequence: ++sequence, segment, bytes: part };
-        }
-      };
-      if (streamingUnsupported) {
-        yield* emitBytes(result.audioBuffer);
-      } else {
-        if (!result.audioStream) throw new SpeechStreamError("missing_audio_stream");
-        reader = result.audioStream.getReader();
-        const cancel = () => { void reader.cancel(signal.reason).catch((error) => {
-          diagnostics?.event("tts", "provider_cancel", "cleanup_failed", failureSummary(error, { stage: "cleanup", confirmed: false }), "warn");
-        }); };
-        signal?.addEventListener("abort", cancel, { once: true });
+      timing?.mark("first_synthesis_request");
+      timing?.segment("request", segment);
+      let completed = false;
+      while (!completed) {
+        let result, reader, primaryFailure, retryError, cancel;
+        let nativeAttempts = 1;
+        diagnostics?.event("tts", "segment", "started", { segments: segment, attempt: retry.used ? 2 : 1 });
+        const segmentStartBytes = totalAudio;
         try {
-          while (true) {
+          if (!streamingUnsupported) {
+            result = await retry.invoke(() => host.stream(text, { retry: retry.used }), releaseLate);
             checkAbort(signal);
-            const part = await reader.read();
+            nativeAttempts = result?.attempts?.filter((v) => v.outcome !== "skipped").length ?? 1;
+            if (unsupported(result)) {
+              await result.release?.(); result = undefined;
+              streamingUnsupported = true;
+              diagnostics?.event("tts", "selection", "fallback", { reason: "unsupported_for_streaming", mode: "buffered" }, "info");
+            } else if (!result?.success) throw annotateFailure(new SpeechStreamError("synthesis_failed"),
+              resultFailure(result, { stage: "synthesis_request" }));
+          }
+          const mode = streamingUnsupported ? "sentence_buffered" : "sentence_progressive";
+          if (streamingUnsupported) {
+            nativeAttempts = 1;
+            result = await retry.invoke(() => host.buffer(text, { retry: retry.used }), releaseLate);
+            nativeAttempts = result?.attempts?.filter((v) => v.outcome !== "skipped").length ?? 1;
+          }
+          checkAbort(signal);
+          if (!result?.success) throw annotateFailure(new SpeechStreamError("synthesis_failed"),
+            resultFailure(result, { stage: "synthesis_request" }));
+          if (!result.outputFormat || !result.fileExtension) throw new SpeechStreamError("missing_audio_format");
+          const nextFormat = JSON.stringify([result.outputFormat, result.fileExtension]);
+          if (format && format !== nextFormat && !allowFormatChange) throw new SpeechStreamError("audio_format_changed");
+          let first;
+          if (streamingUnsupported) first = { value: result.audioBuffer, done: !result.audioBuffer?.length };
+          else {
+            if (!result.audioStream) throw new SpeechStreamError("missing_audio_stream");
+            reader = result.audioStream.getReader();
+            // No audio_start is exposed until the first bytes exist. A stream
+            // failing on its first read can still be safely retried once.
+            cancel = () => { void reader.cancel(retry.signal?.reason).catch((error) => {
+              diagnostics?.event("tts", "provider_cancel", "cleanup_failed", failureSummary(error, { stage: "cleanup", confirmed: false }), "warn");
+            }); };
+            retry.signal?.addEventListener("abort", cancel, { once: true });
+            first = await retry.invoke(() => reader.read());
+          }
+          if (first.done) throw new SpeechStreamError("empty_audio");
+          if (!(first.value instanceof Uint8Array)) throw new SpeechStreamError("invalid_audio_chunk");
+          // A zero-length source read is not recoverable output. Keep reading
+          // without exposing headers, while the retry's first-output deadline applies.
+          while (!first.value.length) {
+            if (!reader) throw new SpeechStreamError("empty_audio");
+            first = await retry.invoke(() => reader.read());
+            if (first.done) throw new SpeechStreamError("empty_audio");
+            if (!(first.value instanceof Uint8Array)) throw new SpeechStreamError("invalid_audio_chunk");
+          }
+          format = nextFormat;
+          // Conservative fence: even a downstream segment header cannot be
+          // rewound safely by the normalizer, so no retry after this yield.
+          retry.expose();
+          yield { type: "audio_start", sequence: ++sequence, segment, mode,
+            output_format: result.outputFormat, extension: result.fileExtension.replace(/^\./, ""),
+            provider: result.provider, model: result.providerModel };
+          const emitBytes = function* (bytes) {
+            if (!(bytes instanceof Uint8Array)) throw new SpeechStreamError("invalid_audio_chunk");
+            if (bytes.length) { timing?.mark("first_source_audio"); timing?.segment("source_audio", segment); }
+            totalAudio += bytes.length;
+            if (totalAudio > maxAudioBytes) throw new SpeechStreamError("audio_limit");
+            for (const part of boundedBytes(bytes, maxChunkBytes)) {
+              checkAbort(signal);
+              yield { type: "audio_chunk", sequence: ++sequence, segment, bytes: part };
+            }
+          };
+          yield* emitBytes(first.value);
+          if (reader) while (true) {
             checkAbort(signal);
+            const part = await reader.read(); checkAbort(signal);
             if (part.done) break;
             yield* emitBytes(part.value);
           }
-        } finally { signal?.removeEventListener("abort", cancel); }
-      }
-      if (totalAudio === segmentStartBytes) throw new SpeechStreamError("empty_audio");
-      yield { type: "audio_end", sequence: ++sequence, segment };
-      timing?.segment("completed", segment);
-      diagnostics?.event("tts", "segment", "completed", { segments: segment, bytes: totalAudio-segmentStartBytes,
-        mode: streamingUnsupported ? "buffered" : "progressive" });
-      segment++;
-    } catch (error) {
-      primaryFailure = error;
-      throw annotateFailure(error, { stage: "synthesis_request" });
-    } finally {
-      // Stream ownership is released on success, failure and early consumer close.
-      let cleanupFailure;
-      const cleanup = async (fn, fatal = true) => {
-        try { await fn(); }
-        catch (error) {
-          if (fatal) cleanupFailure ??= error;
-          diagnostics?.event("tts", "provider_release", "cleanup_failed", failureSummary(error, { stage: "cleanup" }), "warn");
+          if (totalAudio === segmentStartBytes) throw new SpeechStreamError("empty_audio");
+          yield { type: "audio_end", sequence: ++sequence, segment };
+          timing?.segment("completed", segment);
+          diagnostics?.event("tts", "segment", "completed", { segments: segment, bytes: totalAudio-segmentStartBytes,
+            mode: streamingUnsupported ? "buffered" : "progressive" });
+          completed = true; segment++;
+        } catch (error) {
+          primaryFailure = error;
+          if (!retry.eligible(error, nativeAttempts)) throw annotateFailure(error, { stage: "synthesis_request" });
+          retryError = error;
+        } finally {
+          if (cancel) retry.signal?.removeEventListener("abort", cancel);
+          // Always settle/release the first provider before a second invocation.
+          let cleanupFailure;
+          const cleanup = async (fn, fatal = true) => {
+            try { await fn(); }
+            catch (error) {
+              if (fatal) cleanupFailure ??= error;
+              diagnostics?.event("tts", "provider_release", "cleanup_failed", failureSummary(error, { stage: "cleanup" }), "warn");
+            }
+          };
+          if (reader) {
+            await cleanup(() => reader.cancel(), false);
+            await cleanup(() => reader.releaseLock());
+          } else await cleanup(() => result?.audioStream?.cancel(), false);
+          await cleanup(() => result?.release?.());
+          if (cleanupFailure && retryError) throw primaryFailure;
+          if (cleanupFailure && !primaryFailure) throw annotateFailure(cleanupFailure, { stage: "cleanup" });
         }
-      };
-      if (reader) {
-        await cleanup(() => reader.cancel(), false);
-        await cleanup(() => reader.releaseLock());
-      } else await cleanup(() => result?.audioStream?.cancel(), false);
-      await cleanup(() => result?.release?.());
-      if (cleanupFailure && !primaryFailure) throw annotateFailure(cleanupFailure, { stage: "cleanup" });
+        if (retryError && !await retry.retry(retryError, { nativeAttempts })) throw retryError;
+      }
     }
-  }
-  checkAbort(signal);
-  yield { type: "done", sequence: ++sequence, segments: segment, audio_bytes: totalAudio };
+    checkAbort(signal);
+    yield { type: "done", sequence: ++sequence, segments: segment, audio_bytes: totalAudio };
+  } catch (error) { failure = error; throw error; }
+  finally { retry.finish(failure); }
 }

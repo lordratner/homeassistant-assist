@@ -16,6 +16,7 @@ import { AssistTools, ASSIST_BINDING } from "./assist-tools.mjs";
 import { VoiceContinuation, CONTINUATION_BINDING } from "./voice-continuation.mjs";
 import { spawn } from "node:child_process";
 import { Diagnostics, annotateFailure, failureSummary } from "./observability.mjs";
+import { SpeechRetry, ReplayPcm } from "./speech-retry.mjs";
 const providerInvoked = Symbol("native-stt-invoked");
 
 function wavHeader(bytes) {
@@ -188,8 +189,10 @@ export class OpenClawHost {
 
   speechHost() {
     if (this.normalizerAvailable === false) throw new JobError("audio_normalizer_unavailable");
+    const config = resolveTtsConfig(this.cfg, { agentId: this.profile.agentId, channelId: "openclaw-home-assistant" });
+    const selectedProvider = this.profile.tts.provider ?? getTtsProvider(config, resolveTtsPrefsPath(config));
     const overrides = resolveExplicitTtsOverrides({ cfg: this.cfg, agentId: this.profile.agentId,
-      channelId: "openclaw-home-assistant", provider: this.profile.tts.provider,
+      channelId: "openclaw-home-assistant", provider: selectedProvider,
       modelId: this.profile.tts.model, voiceId: this.profile.tts.voice });
     const common = { cfg: this.cfg, agentId: this.profile.agentId, channel: "openclaw-home-assistant",
       overrides, disableFallback: true };
@@ -197,7 +200,8 @@ export class OpenClawHost {
       // Capability fallback must not switch providers solely to obtain streaming.
       stream: (text) => streamSpeech({ ...common, text }),
       // Real provider fallback remains OC's policy, never a private vendor stack.
-      buffer: (text) => synthesizeSpeech({ ...common, text, disableFallback: false }),
+      // A retry never starts a second native provider-fallback chain.
+      buffer: (text, { retry = false } = {}) => synthesizeSpeech({ ...common, text, disableFallback: retry }),
     }, "speech_provider", ["stream", "buffer"]);
   }
 
@@ -209,13 +213,28 @@ export class OpenClawHost {
   }
 
   async transcribe(audio, { language, signal, timing }) {
-    try { const result = await this.transcribeInput(audio, { language, signal, timing });
+    const retry = new SpeechRetry({ kind: "stt", signal, diagnostics: this.diagnostics, timing });
+    const replay = new ReplayPcm(audio, { signal, diagnostics: this.diagnostics });
+    const selection = {};
+    let failure;
+    try {
+      let result;
+      try { result = await this.transcribeInput(replay.stream(), { language, signal, timing, selection }); }
+      catch (error) {
+        // Native batch already owns provider retry/key rotation and exposes no
+        // public attempt budget. Never multiply those hidden attempts here.
+        if (!await retry.retry(error, { nativeAttempts: selection.mode === "batch" ? 2 : 1,
+          beforeRetry: () => replay.complete() })) throw error;
+        result = await retry.invoke((retrySignal) => this.transcribeInput(replay.stream(), { language, signal: retrySignal, timing, selection }));
+        retry.recovered();
+      }
       if (result[providerInvoked]) this.recordStageResult("stt"); return result; }
-    catch (error) { this.recordStageResult("stt", error);
+    catch (error) { failure = error; this.recordStageResult("stt", error);
       throw annotateFailure(error, { stage: "stt_transcription", provider: this.profile.stt.provider }); }
+    finally { retry.finish(failure); void replay.close(); }
   }
 
-  async transcribeInput(audio, { language, signal, timing }) {
+  async transcribeInput(audio, { language, signal, timing, selection = {} }) {
     signal.throwIfAborted();
     let cfg = this.cfg;
     const stt = this.profile.stt;
@@ -227,7 +246,7 @@ export class OpenClawHost {
       } } };
     }
     let fallbackReason = "native_realtime_finalization_contract_unavailable";
-    if (this.streamingTranscriber) {
+    if (this.streamingTranscriber && selection.mode !== "batch") {
       let consumed = false;
       let bytes = 0, frames = 0;
       const diagnostics = this.diagnostics;
@@ -245,17 +264,22 @@ export class OpenClawHost {
           diagnostics.event("stt", "input", "closed", { bytes, frames, mode: "realtime" });
         }
       }
-      const streamed = await this.streamingTranscriber({ cfg, agentId: this.profile.agentId,
-        audio: measuredAudio(), format: { encoding: "pcm_s16le", sampleRate: 16000, channels: 1 },
-        signal, language: stt.language ?? language,
-        scopeContext: { channel: "openclaw-home-assistant", chatType: "direct" } });
+      let streamed;
+      try { streamed = await this.streamingTranscriber({ cfg, agentId: this.profile.agentId,
+          audio: measuredAudio(), format: { encoding: "pcm_s16le", sampleRate: 16000, channels: 1 },
+          signal, language: stt.language ?? language,
+          scopeContext: { channel: "openclaw-home-assistant", chatType: "direct" } }); }
+      catch (error) { selection.mode = "realtime"; throw error; }
       signal.throwIfAborted();
       if (streamed.supported) {
+        selection.mode = "realtime";
         this.diagnostics.event("stt", "transcription", "completed", { mode: "realtime", provider: stt.provider });
         timing?.mark("transcription_completed");
         return { text: streamed.text, no_speech: streamed.no_speech, mode: "realtime", [providerInvoked]: bytes > 0,
           language: stt.language ?? language };
       }
+      if (selection.mode === "realtime") throw annotateFailure(new JobError("speech_retry_not_safe"),
+        { reason: "speech_retry_not_safe", category: "policy", stage: "select" });
       // The public SDK guarantees unsupported is returned before touching the
       // audio iterator. Execution failures throw, never silently replay audio.
       if (consumed) throw new JobError("streaming_fallback_after_consumption");
@@ -271,6 +295,7 @@ export class OpenClawHost {
         audio: { ...media.audio, preferredModel: undefined }, models: [{ ...stt.batch, capabilities: ["audio"] }, ...(media.models ?? [])] } } } : this.cfg;
     }
     if (typeof this.api.runtime.mediaUnderstanding?.transcribeAudioFile !== "function") throw new JobError("native_stt_unavailable");
+    selection.mode = "batch";
     await mkdir(this.tempRoot, { recursive: true, mode: 0o700 });
     const directory = await mkdtemp(join(this.tempRoot, "stt-"));
     const path = join(directory, "utterance.wav");

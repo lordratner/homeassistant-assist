@@ -1,6 +1,6 @@
 # Structured logging and diagnostic contract
 
-Bridge dev.9 + HA integration dev.5. This document describes source behavior;
+Bridge dev.11 + HA integration dev.7. This document describes source behavior;
 local/native fixture evidence is not proof of installation or physical playback.
 
 ## What is covered
@@ -16,7 +16,8 @@ by their owning operation span rather than dumping their arguments.
 
 One model is used across JS/Python; the paired `diagnostic-codes.json` and
 `diagnostic-schema.json` catalogs are identical. No new credentials, permissions,
-network listener or provider retry policy is introduced.
+network listener is introduced by diagnostics. Product retry policy is documented in
+[SPEECH-RELIABILITY.md](SPEECH-RELIABILITY.md).
 
 ## Record fields and correlation
 
@@ -88,7 +89,7 @@ failure receipt itself cannot be written.
   bounded by the job store (normally24h); result/audio retention is unchanged.
 - INFO covers significant phases/lifecycle and important completed operations;
   WARN covers failures/failed cleanup; DEBUG adds internal storage/control spans.
-  Platform log level and rotation still apply. In-memory rings reset on runtime
+  Successful polling is DEBUG and does not evict voice history; HA availability transitions/counts summarize repeated failures. Platform log level and rotation still apply. In-memory rings reset on runtime
   replacement/restart; native logs and persisted job summaries provide continuity.
 
 Logging sink errors never retry work or replace its outcome; failed attachment

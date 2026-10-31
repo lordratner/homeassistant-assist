@@ -1,6 +1,6 @@
 # Product setup: OpenClaw as a Home Assistant assistant
 
-Development pair: bridge **0.0.1-dev.10**, HA **0.0.1-dev.6**, protocol **1.2**.
+Development pair: bridge **0.0.1-dev.11**, HA **0.0.1-dev.7**, protocol **1.2**.
 This is not a promise that every provider, runtime version or satellite is certified.
 
 ## Choose what each platform owns
@@ -106,10 +106,12 @@ native. Set `batch:{}` to use the original native audio pipeline instead.
 The native pipeline must itself have a usable batch/CLI configuration. No public
 SDK can manufacture a missing account or engine; use HA-native STT if preferred.
 
-Unsupported capability is **not** an auth/quota/network retry policy. Failures
-after input consumption or audio output do not replay the utterance, repeat an
-LLM turn or duplicate a device action. Native configured provider policy remains
-authoritative. An unconfirmed tool outcome needs status/recovery, not resubmission.
+Unsupported-capability fallback is separate from execution retry. Eligible finite
+STT and pre-output TTS failures permit one bounded extra bridge attempt; admitted
+realtime STT cannot switch selection on retry, and TTS never replays after output.
+Native batch STT owns its existing retries without another bridge invocation.
+See [speech reliability](SPEECH-RELIABILITY.md). No speech recovery repeats an
+LLM turn or device action; an unconfirmed tool outcome needs status/recovery, not resubmission.
 
 ## Automation and optional HA speech
 

@@ -30,6 +30,74 @@ async function fixture(run, transcribeAudioStream) {
 async function* audio() { yield Buffer.alloc(320, 1); yield Buffer.alloc(80, 2); }
 const options = () => ({ language: "en", signal: new AbortController().signal });
 
+test("an admitted realtime retry cannot change to batch when capability recheck is unsupported", async () => {
+  await fixture(async ({ host, batchCalls }) => {
+    let calls = 0;
+    host.streamingTranscriber = async ({ audio: input }) => {
+      if (++calls === 1) { await input[Symbol.asyncIterator]().next(); throw Object.assign(new Error("PRIVATE"), { code: "ECONNRESET" }); }
+      return { supported: false, reason: "configured_audio_selection_requires_batch" };
+    };
+    await assert.rejects(host.transcribe(audio(), options()), /speech_retry_not_safe/);
+    assert.equal(calls, 2); assert.equal(batchCalls.length, 0);
+  });
+});
+
+test("batch STT keeps its native retry owner; bridge never stacks a second batch invocation", async () => {
+  await fixture(async ({ host }) => {
+    let calls = 0;
+    host.api.runtime.mediaUnderstanding.transcribeAudioFile = async () => { calls++; throw Object.assign(new Error("PRIVATE"), { status: 503 }); };
+    await assert.rejects(host.transcribe(audio(), options()));
+    assert.equal(calls, 1);
+  });
+});
+
+test("transient mid-input STT failure replays the utterance once, not another provider", async () => {
+  let calls = 0;
+  await fixture(async ({ host, batchCalls, root }) => {
+    host.streamingTranscriber = async ({ audio: input, cfg }) => {
+      calls++;
+      assert.equal(cfg.tools.media.models[0].provider, "unfamiliar-provider");
+      if (calls === 1) {
+        await input[Symbol.asyncIterator]().next();
+        throw Object.assign(new Error("PRIVATE_NETWORK_DETAIL"), { code: "ECONNRESET" });
+      }
+      assert.deepEqual(Buffer.concat(await Array.fromAsync(input)),
+        Buffer.concat([Buffer.alloc(320, 1), Buffer.alloc(80, 2)]));
+      return { supported: true, text: "Recovered final", no_speech: false };
+    };
+    assert.equal((await host.transcribe(audio(), options())).text, "Recovered final");
+    assert.equal(calls, 2); assert.equal(batchCalls.length, 0);
+    assert.deepEqual(await readdir(root), []);
+  });
+});
+
+test("cancel during STT retry collection never creates another provider call", async () => {
+  await fixture(async ({ host }) => {
+    const controller = new AbortController(); let calls = 0;
+    async function* input() { yield Buffer.alloc(2); controller.abort(); yield Buffer.alloc(2); }
+    host.streamingTranscriber = async ({ audio: stream }) => {
+      calls++; await stream[Symbol.asyncIterator]().next();
+      throw Object.assign(new Error("PRIVATE"), { status: 503 });
+    };
+    await assert.rejects(host.transcribe(input(), { language: "en", signal: controller.signal }), /abort/i);
+    assert.equal(calls, 1);
+  });
+});
+
+test("unknown/permanent STT failures do not replay; second transient failure ends the job", async () => {
+  await fixture(async ({ host, batchCalls }) => {
+    for (const failure of [new Error("PRIVATE_UNKNOWN"), Object.assign(new Error("PRIVATE_AUTH"), { status: 401 }),
+      Object.assign(new Error("PRIVATE_QUOTA"), { status: 429, errorCode: "quota_exceeded" })]) {
+      let calls = 0; host.streamingTranscriber = async () => { calls++; throw failure; };
+      await assert.rejects(host.transcribe(audio(), options())); assert.equal(calls, 1);
+    }
+    let calls = 0;
+    host.streamingTranscriber = async () => { calls++; throw Object.assign(new Error("PRIVATE"), { status: 503 }); };
+    await assert.rejects(host.transcribe(audio(), options())); assert.equal(calls, 2);
+    assert.equal(batchCalls.length, 0);
+  });
+});
+
 test("constructor uses the optional public runtime method with finite PCM arguments", async () => {
   let params, receiver;
   await fixture(async ({ host, batchCalls, root }) => {

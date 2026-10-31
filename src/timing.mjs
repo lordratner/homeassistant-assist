@@ -3,7 +3,8 @@ const stages = new Set(["request_received", "authorization_ready", "binding_read
   "admission_started", "job_started", "model_selection_ready", "work_admitted",
   "session_ready", "dispatch_started", "model_input", "first_text", "dispatch_completed",
   "input_complete", "transcription_started", "transcription_completed", "first_synthesis_request",
-  "first_source_audio", "first_decoded_audio", "first_audio_frame", "job_completed", "job_failed", "cancel_requested"]);
+  "first_source_audio", "first_decoded_audio", "first_audio_frame", "job_completed", "job_failed", "cancel_requested",
+  "retry_started", "retry_completed", "retry_failed", "retry_skipped"]);
 const segmentStages = new Set(["request", "source_audio", "decoded_audio", "completed"]);
 export class RunTiming {
   constructor(clock = () => performance.now()) {

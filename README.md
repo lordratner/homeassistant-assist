@@ -2,7 +2,7 @@
 
 ## Current product candidate
 
-Bridge **dev.10** + HA **dev.6**, additive protocol **1.2**. New source candidates,
+Bridge **dev.11** + HA **dev.7**, additive protocol **1.2**. New source candidates,
 not a public compatibility certification or a claim they are installed. Start
 with [the product setup guide](docs/PRODUCT.md), [compatibility](docs/COMPATIBILITY.md)
 and [HA quality checklist](docs/QUALITY.md). Older versioned notes below are
@@ -18,7 +18,7 @@ Agent-neutral Home Assistant speech/conversation backend. OpenClaw owns the
 selected agent, normal tools/memory/policy, session target and provider credentials.
 HA provides native STT, conversation and TTS entities plus two automation actions.
 
-**Development candidate, 0.0.1-dev.10. Live acceptance remains pending.**
+**Development candidate, 0.0.1-dev.11. Live acceptance remains pending.**
 Production plugin registration and the paired native HA flow are implemented and
 pass disposable-runtime checks. Real providers, physical speakers and the full
 compatibility/approval matrix still require controlled acceptance.
@@ -173,4 +173,8 @@ uncertain admitted work never redispatches. See [protocol](docs/PROTOCOL.md).
 The logging candidate adds consistent bounded lifecycle/error logs across both
 products, persistent safe failure summaries, cross-layer request/job correlation,
 and diagnostics readable during startup/storage failure. No transcript/audio/key
-logging or automatic retry is enabled. See [logging contract](docs/LOGGING.md).
+logging is enabled. Bounded speech retry is described below. See [logging contract](docs/LOGGING.md).
+
+## Speech retry and health logging
+
+Speech recovery has one owner and at most one additional bridge attempt per eligible streaming STT/TTS job. There is no whole-pipeline replay or retry after partial TTS output. Batch-only setups keep native OpenClaw retry policy without an added bridge retry. Successful health polling stays DEBUG; availability transitions and real voice work remain visible. See [speech reliability](docs/SPEECH-RELIABILITY.md) for eligibility, cancellation, native SDK limits and diagnostic metadata.

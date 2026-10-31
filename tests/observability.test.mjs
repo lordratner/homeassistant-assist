@@ -3,6 +3,54 @@ import assert from "node:assert/strict";
 import { Diagnostics, failureSummary, annotateFailure, safeFields } from "../src/observability.mjs";
 import cases from "./fixtures/logging-contract-cases.json" with { type: "json" };
 
+test("capability polling stays DEBUG and cannot evict a voice failure", async () => {
+  const lines = { info: [], debug: [], warn: [] };
+  const diag = new Diagnostics({ limit: 8, failureLimit: 4, logger: Object.fromEntries(
+    Object.keys(lines).map((level) => [level, (value) => lines[level].push(value)])) });
+  await assert.rejects(diag.trace("tts", "job", () => { throw Object.assign(new Error("PRIVATE"), { status: 503 }); }));
+  const before = diag.snapshot();
+  for (let i = 0; i < 300; i++) await diag.trace("http", "capabilities", async (span) => {
+    span.phase("request_received");
+    await diag.trace("storage", "read", async () => { span.phase("authorization_ready"); });
+  });
+  const after = diag.snapshot();
+  assert.deepEqual(after.recent, before.recent); assert.deepEqual(after.failures, before.failures);
+  assert.equal(lines.info.length, 0); assert.ok(lines.debug.length);
+  assert.ok(after.stats.polling_events >= 300); assert.equal(after.stats.observer_failures, 0);
+});
+
+test("typed provider/system causes and long Retry-After survive without raw payload", () => {
+  const value = failureSummary(Object.assign(new Error("PRIVATE"), { status: 429, errorCode: "rate_limited", retryAfterMs: 172800000 }));
+  assert.equal(value.provider_code, "rate_limited"); assert.equal(value.retry_after_ms, 172800000);
+  const network = failureSummary(Object.assign(new Error("PRIVATE"), { systemCode: "EHOSTUNREACH" }));
+  assert.equal(network.category, "transport"); assert.equal(network.classification_source, "system");
+  assert.ok(!JSON.stringify(value).includes("PRIVATE"));
+});
+
+test("quiet capability routes still retain authorization failures at WARN", async () => {
+  const warnings = [], diag = new Diagnostics({ logger: { warn: (line) => warnings.push(line) } });
+  await assert.rejects(diag.trace("http", "capabilities", async () => {
+    await diag.trace("authority", "authorize", () => { throw Object.assign(new Error("PRIVATE"), { code: "unauthorized" }); });
+  }));
+  const failures = diag.snapshot().failures;
+  assert.ok(failures.some((e) => e.component === "authority" && e.category === "authentication"));
+  assert.ok(failures.some((e) => e.component === "http" && e.category === "authentication"));
+  assert.equal(warnings.length, 2); assert.ok(!warnings.join("").includes("PRIVATE"));
+});
+
+test("provider-code provenance remains attached to its source across wrapper causes", () => {
+  const parsed = failureSummary(new Error("service_unavailable", {
+    cause: Object.assign(new Error("PRIVATE"), { errorCode: "transcriber_error" }) }));
+  assert.equal(parsed.provider_code, "service_unavailable");
+  assert.equal(parsed.classification_source, "known_token");
+  const quota = failureSummary(new Error("rate_limited", {
+    cause: Object.assign(new Error("PRIVATE"), { status: 429, errorCode: "quota_exceeded" }) }));
+  assert.equal(quota.category, "quota"); assert.equal(quota.provider_code, "quota_exceeded");
+  assert.equal(quota.classification_source, "structured");
+  const fetch = failureSummary(new TypeError("PRIVATE", { cause: Object.assign(new Error("PRIVATE"), { code: "EAI_AGAIN" }) }));
+  assert.equal(fetch.category, "transport"); assert.equal(fetch.system_code, "EAI_AGAIN");
+});
+
 test("paired diagnostic classification contract is consistent across common failure kinds", () => {
   for (const value of cases) {
     const error = Object.assign(new Error("PRIVATE_ERROR"), { code: value.code, status: value.status, errorCode: value.provider_code });

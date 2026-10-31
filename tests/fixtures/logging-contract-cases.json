@@ -79,7 +79,7 @@
   {
     "code": "unknown_error",
     "provider_code": "quota_exceeded",
-    "category": "rate_limit"
+    "category": "quota"
   },
   {
     "code": "unknown_error",
