@@ -1,4 +1,13 @@
-# OpenClaw Home Assistant
+# Home Assistant Assist — OpenClaw plugin
+
+Connects OpenClaw to Home Assistant Assist for text conversations, native Assist
+tools, and optional speech. The companion HA integration is
+[OpenClaw Assist Bridge](https://github.com/lordratner/openclaw-assist-bridge).
+
+This repository was renamed from `openclaw-home-assistant` to `homeassistant-assist`.
+The package name, plugin ID `openclaw-home-assistant`, configuration keys, API
+paths, and state layout are unchanged. No reinstallation, re-pairing, or runtime
+configuration change is required solely for the repository rename.
 
 ## Current product candidate
 
