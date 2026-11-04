@@ -1,5 +1,9 @@
 # Installation, upgrade and rollback — development candidate
 
+Source: [homeassistant-assist](https://github.com/lordratner/homeassistant-assist).
+The repository rename does not change the package name or plugin ID; archive
+names and configuration examples below intentionally retain those identifiers.
+
 This is a review procedure, **not evidence that a live installation was run**.
 The current bridge candidate is 0.0.1-dev.10 and must remain a controlled canary until
 [acceptance gates](ACCEPTANCE.md) pass. Tested pair: OC 2026.10.3 / Node 24.18.1,

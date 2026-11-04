@@ -35,5 +35,13 @@
     "docs/",
     "planning/",
     "implementation/STATUS.md"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lordratner/homeassistant-assist.git"
+  },
+  "homepage": "https://github.com/lordratner/homeassistant-assist#readme",
+  "bugs": {
+    "url": "https://github.com/lordratner/homeassistant-assist/issues"
+  }
 }
