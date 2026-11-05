@@ -1,6 +1,6 @@
 # Product setup: OpenClaw as a Home Assistant assistant
 
-Development pair: bridge **0.0.1-dev.11**, HA **0.0.1-dev.7**, protocol **1.2**.
+Public pair: plugin **0.0.1** (dev.11 implementation), HA **0.0.1** (dev.7 implementation), protocol **1.2**.
 This is not a promise that every provider, runtime version or satellite is certified.
 
 ## Choose what each platform owns

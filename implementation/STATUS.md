@@ -1,3 +1,13 @@
+# Public release checkpoint — 2026-11-04
+
+Release 0.0.1 is based on plugin dev.11 and HA dev.7, protocol 1.2.
+See README, docs/INSTALL.md, docs/COMPATIBILITY.md and versioned GitHub release
+notes for current distribution and scoped verification. No core patch is bundled;
+conversation, batch STT and buffered TTS work without the finite-STT proposal.
+
+The older checkpoint below is retained as historical implementation evidence,
+not a claim about the current package or a particular live installation.
+
 # Current product candidate — 2026-10-29
 
 OCdev10 / HAdev6, protocol1.2: independent stage readiness, optional OC speech,

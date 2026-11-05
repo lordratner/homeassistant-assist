@@ -1,21 +1,27 @@
-# Installation, upgrade and rollback — development candidate
+# Installation, upgrade and rollback
 
-Source: [homeassistant-assist](https://github.com/lordratner/homeassistant-assist).
-The repository rename does not change the package name or plugin ID; archive
-names and configuration examples below intentionally retain those identifiers.
+Source: [Home Assistant Assist plugin](https://github.com/lordratner/homeassistant-assist).
+The repository rename does not change the `openclaw_voice` domain, existing
+pairings, or the companion plugin ID. No identifier migration is needed.
 
-This is a review procedure, **not evidence that a live installation was run**.
-The current bridge candidate is 0.0.1-dev.10 and must remain a controlled canary until
-[acceptance gates](ACCEPTANCE.md) pass. Tested pair: OC 2026.10.3 / Node 24.18.1,
-HA 2026.10.4 / Python 3.14.10, FFmpeg 7.1.5 on Linux. Other versions require a
-separate compatibility run; do not infer broad support from version ordering.
+The public pair is plugin **0.0.1** (dev.11 implementation) and HA integration
+**0.0.1** (dev.7 implementation), protocol **1.2**. Download versioned artifacts
+from the repositories' Releases pages. The plugin is distributed as a GitHub
+release archive, not an npm package. No core patch is bundled or required for
+conversation, batch STT or buffered TTS. Existing HA STT/TTS engines also work.
+
+The scoped baseline is stock OpenClaw 2026.10.3 / 2026.10.10 (Node 24),
+HA 2026.10.4 (Python 3.14.2+), with FFmpeg for OpenClaw TTS only.
+Synthetic framework checks are not physical speaker or all-provider certification;
+see [compatibility](COMPATIBILITY.md). Installation does not change Assist pipelines.
 
 ## Before installation
 
 1. Verify artifact hashes and record both source revisions. Keep the previous
    plugin/integration package and configuration available for rollback.
 2. Confirm the target OC/HA versions, FFmpeg availability if OpenClaw TTS is used on the OC host and
-   supported public SDK exports. Do not edit installed core bundles to compensate.
+   supported public runtime/SDK capabilities. Do not edit installed core bundles
+   to compensate.
 3. Choose an existing agent; decide whether it may use household-control tools
    and approval-requiring tools through its **normal OC policy**. Pairing does not
    grant the voice user operator/admin authority or identify a human speaker.
@@ -29,10 +35,15 @@ separate compatibility run; do not infer broad support from version ordering.
 
 ## OC installation
 
-After approval, install the reviewed local archive without silently enabling it:
+Download the plugin archive and checksum file from
+[release 0.0.1](https://github.com/lordratner/homeassistant-assist/releases/tag/0.0.1),
+verify the checksum, then install without silently enabling it:
 
 ```sh
-openclaw plugins install --no-enable /review/path/lordratner-openclaw-home-assistant-0.0.1-dev.10.tgz
+curl -fLO https://github.com/lordratner/homeassistant-assist/releases/download/0.0.1/lordratner-openclaw-home-assistant-0.0.1.tgz
+curl -fLO https://github.com/lordratner/homeassistant-assist/releases/download/0.0.1/SHA256SUMS
+sha256sum -c SHA256SUMS
+openclaw plugins install --no-enable ./lordratner-openclaw-home-assistant-0.0.1.tgz
 ```
 
 Use the normal installation-policy review; do not bypass a rejection. Preserve
@@ -54,6 +65,15 @@ An acknowledgment only schedules the restart. After continuation, verify Gateway
 health, existing channel reconnection and `openclaw_home_assistant.status`.
 There is no second plugin listener and no reason to open another port.
 
+Provider-dependent realtime STT also requires an optional finite-input
+core runtime; installing the plugin alone retains batch behavior on a stock host.
+Unsupported selections fall back only before input consumption, never after an
+admitted-stream failure. See [capability notes](SDK-GAPS.md). Existing HA dev.3
+already supports the unchanged upload/final-transcript contract and continuation
+boolean: no HA redeployment or restart is needed solely for these backend changes.
+Allow its normal 30-second capabilities/profile refresh after backend activation,
+then verify the actual mode and physical follow-up listening separately.
+
 An administrator can issue a code with:
 
 ```sh
@@ -67,12 +87,39 @@ in HA.
 
 ## HA installation
 
-After approval, install the reviewed `custom_components/openclaw_voice/` directory
-under HA's configuration directory. Use a supported file-deployment mechanism;
-do not replace another integration or edit HA internal storage directly. Restart
-HA only under the separately approved maintenance step, then add the integration
-in Settings → Devices & services. HACS custom-repository discovery is a future
-validation path, not a claim that a public HACS listing exists.
+### HACS (recommended)
+
+With HACS already installed, use [Open in HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=lordratner&repository=openclaw-assist-bridge&category=integration),
+or open **HACS → ⋮ → Custom repositories**, add
+`https://github.com/lordratner/openclaw-assist-bridge`, and choose
+**Integration**. Find **OpenClaw Home Assistant** and download it. For a
+historical development prerelease, enable **Show beta versions** in the download dialog.
+The current 0.0.1 release does not need that toggle.
+Read the selected release's requirements and notes before downloading.
+
+HACS manages only `custom_components/openclaw_voice/`. It does not install the
+companion OpenClaw plugin, provision providers, change pipelines, or restart HA
+for you. Activate the downloaded Python code with a Home Assistant restart,
+then add the integration in **Settings → Devices & services**. This download
+path does not imply inclusion in the HACS default catalog.
+
+Existing manual installation: back up the current component and HA configuration
+first, then download through HACS into the same component directory and restart
+HA. Keep the existing config entry, entities and pairing; do not remove the
+integration or add a duplicate. Verify the loaded version and connection after
+restart. HACS does not take ownership of your OpenClaw installation.
+
+### Manual alternative
+
+Download `openclaw_voice-0.0.1.zip` and `SHA256SUMS` from
+[release 0.0.1](https://github.com/lordratner/openclaw-assist-bridge/releases/tag/0.0.1),
+verify with `sha256sum -c SHA256SUMS`, and extract the archive's
+`custom_components/openclaw_voice/` directory under HA's
+configuration directory. Use a supported file-deployment mechanism; do not
+replace another integration or edit HA internal storage directly. Restart HA
+under the approved maintenance step, then add the integration in
+**Settings → Devices & services**. Do not mix manual replacements with HACS
+updates without recording which version is installed.
 
 Enter the Gateway URL, one-use code and default history mode. Verify three native
 entities and the `query` / `start_conversation` actions. Create/select a test Assist
@@ -90,8 +137,9 @@ speaker output require the canary approval.
 
 Upgrade paired protocol-major versions together. Preserve plugin metadata and
 HA config entries; never reset state to resolve an unknown receipt or stale
-handle. Read release/migration notes first. Current metadata schema is v1;
-unknown schemas fail closed, and no upgrade migration is claimed yet. Quiesce
+handle. Read release/migration notes first. HA config-entry version 2 migrates
+the history preference from v1 data into options while preserving existing
+entry/entity IDs and credentials; future versions fail closed. Quiesce
 active work, install reviewed versions, perform approved activation/restarts,
 verify status/entities/pairing and repeat the bounded canary. An interrupted
 accepted turn may have executed tools: recover its status, do not resubmit it.

@@ -1,11 +1,14 @@
 # Compatibility and evidence boundaries
 
-Candidate OCdev10 / HAdev6, protocol1.2. This is a development release, not a
-universal-provider certification or a formal Home Assistant quality tier.
+Public pair 0.0.1 / 0.0.1, protocol 1.2, based on plugin dev.11 and HA dev.7.
+This initial release is not a universal-provider certification or a formal
+Home Assistant quality tier.
 
 ## Declared baseline
 
-- OpenClaw public plugin SDK2026.10.3, Node24; no private bundle imports.
+- OpenClaw public plugin SDK 2026.10.3 and 2026.10.10, Node 24; no private bundle imports.
+  CI checks both stock SDK versions. The archive-loaded native-pair proof targets
+  unpatched npm OpenClaw 2026.10.10 with synthetic local providers.
 - HA2026.10.4, Python3.14.2+, using native config entries, Assist/ChatLog and STT/TTS.
 - FFmpeg7.1.5 exercised on Linux for OC TTS normalization. Missing FFmpeg is
   tested as degraded TTS-only availability, not a total service failure.
@@ -43,8 +46,8 @@ vendor service quality, model reasoning, physical audio or acoustic latency.
 - Real HTTPS/reverse-proxy stream buffering and supported device/codec choices.
 - Physical multi-room load, native approval-required tools and interrupted/reboot
   recovery. Never replay uncertain device actions merely to pass a test.
-- Public CI hassfest/HACS results, brand/distribution requirements and an honest
-  measured coverage report. Source validators are not those certifications.
+- Broader provider/device qualification and an honest measured coverage report.
+  Public CI HACS/hassfest validators are not provider or physical-audio certification.
 
 Keep live acceptance receipts separate from source-level test evidence. A prior
 household canary does not certify these new candidate packages or another home.

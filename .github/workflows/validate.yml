@@ -5,6 +5,9 @@ permissions:
 jobs:
   module-and-package:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        openclaw: ["2026.10.3", "2026.10.10"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -12,7 +15,7 @@ jobs:
           node-version: 24
       - run: sudo apt-get update
       - run: sudo apt-get install -y ffmpeg
-      - run: npm install --no-save --package-lock=false --ignore-scripts openclaw@2026.10.3
+      - run: npm install --no-save --package-lock=false --ignore-scripts openclaw@${{ matrix.openclaw }}
       - run: node scripts/validate-package.mjs
       - run: npm test
       - run: npm pack --ignore-scripts

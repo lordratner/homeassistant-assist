@@ -9,13 +9,16 @@ The package name, plugin ID `openclaw-home-assistant`, configuration keys, API
 paths, and state layout are unchanged. No reinstallation, re-pairing, or runtime
 configuration change is required solely for the repository rename.
 
-## Current product candidate
+## Public release 0.0.1
 
-Bridge **dev.11** + HA **dev.7**, additive protocol **1.2**. New source candidates,
-not a public compatibility certification or a claim they are installed. Start
-with [the product setup guide](docs/PRODUCT.md), [compatibility](docs/COMPATIBILITY.md)
-and [HA quality checklist](docs/QUALITY.md). Older versioned notes below are
-historical feature evidence, not the current release status.
+Plugin **0.0.1** uses the dev.11 implementation; HA integration **0.0.1** uses
+the dev.7 implementation, with additive protocol **1.2**. Install the versioned
+[plugin archive](https://github.com/lordratner/homeassistant-assist/releases/tag/0.0.1)
+and [HA integration](https://github.com/lordratner/openclaw-assist-bridge/releases/tag/0.0.1)
+using the [installation guide](docs/INSTALL.md). No npm publication is required.
+This initial public release does not certify every provider, satellite or runtime.
+Start with [setup](docs/PRODUCT.md) and [compatibility](docs/COMPATIBILITY.md).
+Older versioned sections below are historical engineering notes.
 
 Use OpenClaw conversation with existing HA speech providers, all three OC
 entities, or a mix. Missing OC speech dependencies do not disable text chat.
@@ -27,34 +30,26 @@ Agent-neutral Home Assistant speech/conversation backend. OpenClaw owns the
 selected agent, normal tools/memory/policy, session target and provider credentials.
 HA provides native STT, conversation and TTS entities plus two automation actions.
 
-**Development candidate, 0.0.1-dev.11. Live acceptance remains pending.**
-Production plugin registration and the paired native HA flow are implemented and
-pass disposable-runtime checks. Real providers, physical speakers and the full
-compatibility/approval matrix still require controlled acceptance.
+The paired implementation passes disposable-runtime checks. Real provider
+accounts, physical speakers and broader compatibility still require acceptance
+in the target home; synthetic synthesis is not proof of audible playback.
 
 ## Configuration
 
 ### Upstream OpenClaw dependencies for streaming STT
 
-The streaming setup exercised by this project relies on **two companion
-OpenClaw core PRs**, both still open/unmerged as of 2026-10-29:
+**No core PR is required for conversation, HA-native speech, native batch STT
+or buffered TTS.** Those paths work on unpatched stock OpenClaw.
 
-- [#187371 — let plugins finalize streamed speech without provider-specific code](https://github.com/openclaw/openclaw/pull/187371)
-  supplies the optional finite-input streaming-transcription runtime used by the
-  plugin. It is needed for this realtime STT path.
-- [#187369 — realtime transcription honors configured environment proxies](https://github.com/openclaw/openclaw/pull/187369)
-  supplies WebSocket proxy routing needed by installations using configured
-  environment/protected egress proxies.
-
-For that full streaming configuration, use an OpenClaw release containing both
-changes after they merge, or an explicitly reviewed, version-matched core
-canary/backport containing them. **Installing this plugin does not install either
-core change.** Do not assume stock OpenClaw 2026.10.3 includes them or install
-unreviewed moving-main code merely to obtain streaming.
-
-Without the finite-input capability, the plugin uses native batch STT; configure
-a batch-compatible selection or `stt.batch` alternative. Conversation and TTS do
-not require these STT PRs. See [SDK capability notes](docs/SDK-GAPS.md).
+Optional finite-input realtime STT uses the runtime proposed in
+[#187371](https://github.com/openclaw/openclaw/pull/187371), still open as of
+2026-11-04. Without it, use a batch-capable selection, an explicit `stt.batch`
+alternative, or HA's existing STT. The plugin does not install core patches.
+[#187369](https://github.com/openclaw/openclaw/pull/187369) (realtime proxy
+routing) merged on 2026-11-02; whether a particular release includes it must
+still be checked if that optional path needs an egress proxy.
+See [SDK capability notes](docs/SDK-GAPS.md). Do not install unreviewed core
+backports simply to use the ordinary conversation or speech paths.
 
 Select an existing agent explicitly; there is no silent main-agent fallback.
 Illustrative config (merge only after review, never replace the whole config):

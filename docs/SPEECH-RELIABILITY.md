@@ -1,6 +1,6 @@
 # Speech reliability and diagnostics
 
-Bridge dev.11 / HA dev.7. No new credentials, provider SDK, logging service, or configuration flag is required.
+Public pair 0.0.1 / 0.0.1, from plugin dev.11 / HA dev.7. No new credentials, provider SDK, logging service, or configuration flag is required.
 
 ## One retry owner
 
@@ -26,7 +26,7 @@ Unsupported progressive synthesis still falls back to native sentence-buffered s
 
 Safe diagnostics retain known provider codes, HTTP status, WebSocket close code, allowed OS/network code, retry delay, exception category and bounded causes. No prompts, transcript/audio data, error bodies, headers, URLs, credentials or raw stacks are added to logs. Quota exhaustion is distinct from a temporary rate limit; network reachability and aiohttp connection failures are transport, and an owned TimeoutError does not become an intentional cancellation merely because its inner task was cancelled.
 
-Some hosts flatten provider errors before the plugin receives them. Those remain explicitly unknown and are not blindly retried. Additive native speech-error metadata improves classification without changing core retry policy. The two documented native streaming/proxy backports remain separate dependencies; this module does not install core patches.
+Some hosts flatten provider errors before the plugin receives them. Those remain explicitly unknown and are not blindly retried. Additive native speech-error metadata improves classification without changing core retry policy. Finite-input streaming and richer error metadata are optional host capabilities; this module does not install core patches. Conversation, batch STT and buffered TTS do not require those changes.
 
 ## Polling and native logs
 

@@ -17,7 +17,10 @@ test("native OC hook runner preserves exact run, agent and session controls", as
   });
   try {
     const runner = getGlobalHookRunner();
-    assert.deepEqual(await runner.runBeforeModelResolve({ prompt: "test" }, context), {
+    // Newer SDKs include an optional unset fallback field; it must stay unset.
+    const { fallbacksOverride, ...overrides } = await runner.runBeforeModelResolve({ prompt: "test" }, context);
+    assert.equal(fallbacksOverride, undefined);
+    assert.deepEqual(overrides, {
       providerOverride: "fixture", modelOverride: "fixture-model",
     });
     assert.equal(await runner.runBeforeModelResolve({}, { ...context, agentId: "other" }), undefined);

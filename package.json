@@ -1,6 +1,6 @@
 {
   "name": "@lordratner/openclaw-home-assistant",
-  "version": "0.0.1-dev.11",
+  "version": "0.0.1",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -19,7 +19,7 @@
     ]
   },
   "peerDependencies": {
-    "openclaw": "2026.10.3"
+    "openclaw": "2026.10.3 || 2026.10.10"
   },
   "peerDependenciesMeta": {
     "openclaw": {

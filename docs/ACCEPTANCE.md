@@ -1,3 +1,16 @@
+# Release 0.0.1 evidence — 2026-11-04
+
+Initial public pair: plugin dev.11 implementation + HA dev.7 implementation,
+protocol 1.2. Local release checks: 159 plugin tests on stock OpenClaw 2026.10.10,
+93 HA tests on HA 2026.10.4, and both metadata/package validators passed.
+Versioned release notes record the archive-loaded native-pair and public CI results.
+
+Synthetic provider/framework tests do not establish real-account access,
+physical microphone/speaker behavior, acoustic latency, clean unfamiliar-user
+installation, or universal compatibility. Existing pairing/configuration needs
+no identifier migration. See [installation](INSTALL.md) and [compatibility](COMPATIBILITY.md).
+The following dated development records are historical, not current release status.
+
 # Current product candidate evidence — 2026-10-29
 
 Bridge dev10 / HAdev6, protocol1.2. Full module suites138OC+90HA passed. Added
