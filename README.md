@@ -1,58 +1,92 @@
 # Home Assistant Assist — OpenClaw plugin
 
-Connects OpenClaw to Home Assistant Assist for text conversations, native Assist
-tools, and optional speech. The companion HA integration is
-[OpenClaw Assist Bridge](https://github.com/lordratner/openclaw-assist-bridge).
+Use an existing **OpenClaw agent as your Home Assistant assistant**, including
+its normal knowledge, memory, skills, tools and history—not a second, unrelated
+chatbot. This is the **OpenClaw-side plugin**. Install the companion
+[OpenClaw Assist Bridge](https://github.com/lordratner/openclaw-assist-bridge)
+in Home Assistant as well.
 
-This repository was renamed from `openclaw-home-assistant` to `homeassistant-assist`.
-The package name, plugin ID `openclaw-home-assistant`, configuration keys, API
-paths, and state layout are unchanged. No reinstallation, re-pairing, or runtime
-configuration change is required solely for the repository rename.
+## Who it is for, and why use it?
 
-## Public release 0.0.1
+For people who already run Home Assistant and OpenClaw and want to talk to the
+same agent from HA's Assist chat, voice satellites or automations. Use it when
+you want agent conversations and optional native HA device control, while keeping
+HA's pipeline/device choices and OC's agent/provider policy in their own systems.
+It is not a standalone voice assistant or a replacement for either platform.
 
-Plugin **0.0.1** uses the dev.11 implementation; HA integration **0.0.1** uses
-the dev.7 implementation, with additive protocol **1.2**. Install the versioned
-[plugin archive](https://github.com/lordratner/homeassistant-assist/releases/tag/0.0.1)
-and [HA integration](https://github.com/lordratner/openclaw-assist-bridge/releases/tag/0.0.1)
-using the [installation guide](docs/INSTALL.md). No npm publication is required.
-This initial public release does not certify every provider, satellite or runtime.
-Start with [setup](docs/PRODUCT.md) and [compatibility](docs/COMPATIBILITY.md).
-Older versioned sections below are historical engineering notes.
+Choose the parts you need:
 
-Use OpenClaw conversation with existing HA speech providers, all three OC
-entities, or a mix. Missing OC speech dependencies do not disable text chat.
-Streaming is preferred automatically and unsupported capabilities use native
-batch/buffered paths; interrupted admitted work is never blindly repeated.
+- **Conversation only:** HA STT → OpenClaw conversation → HA TTS. Keep existing
+  local speech engines; no OC speech provider or FFmpeg is needed.
+- **All OpenClaw:** OC-backed STT → OpenClaw conversation → OC-backed TTS.
+- **Mixed, or text only:** select each speech engine independently, or call
+  the HA query action without a speaker.
 
+## What runs where?
 
-Agent-neutral Home Assistant speech/conversation backend. OpenClaw owns the
-selected agent, normal tools/memory/policy, session target and provider credentials.
-HA provides native STT, conversation and TTS entities plus two automation actions.
+| Location | Install / responsibility |
+| --- | --- |
+| OpenClaw Gateway host | **This plugin** selects one existing agent and uses OC's native model, session, tools, policy and optional speech providers |
+| Home Assistant host | The [companion integration](https://github.com/lordratner/openclaw-assist-bridge) registers conversation/STT/TTS entities and query/start-conversation actions; HA owns Assist pipelines, exposed entities and playback |
+| Satellite or speaker | Uses its normal HA setup; an interactive satellite needs HA's native start-conversation support. A plain media player is not a microphone |
 
-The paired implementation passes disposable-runtime checks. Real provider
-accounts, physical speakers and broader compatibility still require acceptance
-in the target home; synthetic synthesis is not proof of audible playback.
+HA must be able to reach the Gateway URL; the hosts can be separate machines.
+The plugin uses a route on the existing Gateway, not a new listener/port. Provider
+credentials stay on the platform that owns the provider. Pairing gives HA a scoped
+client credential, **not** an OC admin token or a human-speaker identity. HA's
+exposed-entity policy governs native Assist calls, not other tools already granted
+to your OC agent.
 
-## Configuration
+## Minimum versions and stock compatibility
 
-### Upstream OpenClaw dependencies for streaming STT
+**Yes: both components work with unmodified, stock Home Assistant and OpenClaw
+cores.** Install this project's HA custom integration and OpenClaw plugin through
+their normal extension mechanisms; no core fork, patch, custom Assist pipeline
+engine, MCP server or SSH bridge is required.
 
-**No core PR is required for conversation, HA-native speech, native batch STT
-or buffered TTS.** Those paths work on unpatched stock OpenClaw.
+| Component | Minimum supported version / requirement |
+| --- | --- |
+| Home Assistant Core | **2026.10.4**; older HA releases are not supported |
+| OpenClaw | **2026.10.3**; older OC releases are not supported |
+| This project's pair | OpenClaw plugin **0.0.1** + HA integration **0.0.1**, protocol **1.2** |
+| Node.js on the OC host | For the tested Node 24 line, **24.16.0 or newer within 24.x**; follow OC's own engine requirements, not just the plugin's looser metadata |
+| Python on the HA host | **3.14.2+**, normally managed by HA OS/Container; not a separate install step on those systems |
+| FFmpeg on the OC host | Required **only for OC-backed TTS**; not needed for conversation, OC STT or HA-native TTS. Version 7.1.5 was exercised; no older FFmpeg minimum has been established |
+| HACS | Optional installation convenience for the HA component; manual installation is also supported |
 
-Optional finite-input realtime STT uses the runtime proposed in
-[#187371](https://github.com/openclaw/openclaw/pull/187371), still open as of
-2026-11-04. Without it, use a batch-capable selection, an explicit `stt.batch`
-alternative, or HA's existing STT. The plugin does not install core patches.
-[#187369](https://github.com/openclaw/openclaw/pull/187369) (realtime proxy
-routing) merged on 2026-11-02; whether a particular release includes it must
-still be checked if that optional path needs an egress proxy.
-See [SDK capability notes](docs/SDK-GAPS.md). Do not install unreviewed core
-backports simply to use the ordinary conversation or speech paths.
+These are the **supported version floors**, not a claim that every later release
+has been tested. Plugin CI passes against stock OC **2026.10.3 and 2026.10.10**.
+The complete archive-loaded native-pair proof passes on stock **OC 2026.10.10 +
+HA 2026.10.4**; use that combination to match the end-to-end evidence. Other
+versions above the floors still need compatibility checks. The plugin's current
+peer-dependency declaration deliberately lists the two tested OC versions.
 
-Select an existing agent explicitly; there is no silent main-agent fallback.
-Illustrative config (merge only after review, never replace the whole config):
+The proof uses synthetic providers and devices with real host APIs. It verifies
+pairing, conversation/tools, batch STT, TTS and follow-up decisions—not every
+provider account, physical speaker or satellite. See [compatibility](docs/COMPATIBILITY.md)
+and [acceptance evidence](docs/ACCEPTANCE.md).
+
+## Install and connect
+
+Current public release: **0.0.1** (plugin dev.11 implementation; companion HA
+dev.7 implementation). Both releases are non-prereleases:
+
+- [OpenClaw plugin archive and checksums](https://github.com/lordratner/homeassistant-assist/releases/tag/0.0.1)
+- [HA integration release](https://github.com/lordratner/openclaw-assist-bridge/releases/tag/0.0.1)
+
+The plugin is distributed through GitHub Releases, **not npm**. Download and
+verify the versioned archive, then install it on the **OC host**:
+
+```sh
+curl -fLO https://github.com/lordratner/homeassistant-assist/releases/download/0.0.1/lordratner-openclaw-home-assistant-0.0.1.tgz
+curl -fLO https://github.com/lordratner/homeassistant-assist/releases/download/0.0.1/SHA256SUMS
+sha256sum -c SHA256SUMS
+openclaw plugins install --no-enable ./lordratner-openclaw-home-assistant-0.0.1.tgz
+```
+
+Follow normal installation-policy review. Merge these settings into your OC
+configuration (do not replace the whole file). Select an existing agent explicitly;
+there is no silent main-agent fallback:
 
 ```json
 {
@@ -60,9 +94,7 @@ Illustrative config (merge only after review, never replace the whole config):
     "entries": {
       "openclaw-home-assistant": {
         "enabled": true,
-        "hooks": {
-          "allowConversationAccess": true
-        },
+        "hooks": { "allowConversationAccess": true },
         "config": {
           "agentId": "your-existing-agent",
           "conversation": {
@@ -77,108 +109,111 @@ Illustrative config (merge only after review, never replace the whole config):
 }
 ```
 
-The conversation hook grant is required for run-scoped model selection. The plugin
-uses public `before_model_resolve`/`llm_input` hooks; it does not patch/restore saved
-session preferences. Optional `persistentSession` must belong to the selected
-agent. Omit it to create and durably bind one target on first persistent use.
-Optional `stt` accepts native `provider`, `model`, `language`; `tts` accepts native
-`provider`, `model`, `voice`. Omitted settings inherit OC policy. Do not add keys
-or tokens to this plugin config. Fresh mode means fresh history, not amnesia.
+The conversation hook grant is required for conversation/run-scoped controls.
+Omitted STT/TTS selections inherit OC's native configuration; see
+[product setup](docs/PRODUCT.md) for explicit provider/model/voice settings.
+Do not put provider keys or Gateway tokens in the plugin configuration.
 
-## Operations and evidence
+1. Validate and activate through OC's normal plugin lifecycle. If a Gateway
+   restart is needed, use its supported safe-restart path; no core patch is needed.
+2. Install the companion HA integration through HACS or manually, then restart
+   HA to load its Python code. [Full install/upgrade/rollback guide](docs/INSTALL.md).
+3. Issue a private, one-use code on the OC host:
 
-### Change the next turn's model without reloading
+   ```sh
+   openclaw gateway call openclaw_home_assistant.pairing.issue --params '{"label":"Home Assistant"}' --json
+   ```
 
-Use the owner-only Gateway API, not a config-file edit:
+4. In HA, open **Settings → Devices & services → Add integration → OpenClaw
+   Home Assistant**. Enter the Gateway base URL and code (expires in five minutes),
+   not the owner token. Use HTTPS across untrusted networks.
+5. In **Settings → Voice assistants**, choose the OpenClaw conversation entity
+   and whichever STT/TTS engines you want. Assign that assistant to your test device.
+   Installation never changes preferred/default pipelines.
+
+Choose persistent agent history or a fresh session per HA conversation; a fresh
+session still retains the agent's normal knowledge, memory, skills and tools.
+For native device control, enable **Device control** in HA Options and allow
+`home_assistant` under the selected OC agent's normal policy. Follow-up intent
+uses `voice_conversation`; model/tool and satellite support still apply.
+
+## Speech-to-text and the upstream PRs
+
+**You do not need any unmerged PR to use this pair.** On the tested stock OC
+versions, OC-backed STT transcribes the completed utterance through OC's native
+**batch** API. Alternatively, keep HA's existing STT engine. Conversation and
+TTS are independent of the optional realtime-STT work.
+
+Upstream status checked **2026-11-04**:
+
+| OpenClaw PR | Purpose | Required to use the pair? |
+| --- | --- | --- |
+| [#187371](https://github.com/openclaw/openclaw/pull/187371) — **open** | Adds an optional finite-input streaming-transcription runtime so a plugin can send audio during capture and await a finalized transcript | **No.** Needed only for this plugin's optional realtime STT path, with a supporting provider/model |
+| [#187369](https://github.com/openclaw/openclaw/pull/187369) — **merged Nov. 2** | Makes realtime transcription honor configured environment proxies | **No.** Relevant to that realtime transport when using such proxies; a merge alone does not prove inclusion in your installed OC release |
+| [#189044](https://github.com/openclaw/openclaw/pull/189044) — **open** | Preserves realtime STT provider/connection failure codes for better diagnostics and retry decisions | **No.** Unknown/flattened failures stay conservative rather than being blindly retried |
+| [#189043](https://github.com/openclaw/openclaw/pull/189043) — **open** | Related TTS failure-metadata improvement | **No.** Improves diagnosis/retry classification, not basic conversation or speech availability |
+
+Installing our plugin does **not** install these core changes. Use ordinary stock
+batch STT or HA-native STT unless your host supplies the optional runtime; do not
+patch core merely to get started. A realtime-only OC model needs an explicit
+batch-capable alternative (`stt.batch`), or choose HA STT. The plugin does not
+invent provider/model aliases. Unsupported streaming can fall back before audio
+is consumed; admitted failures never silently switch to batch or another provider.
+No partial transcript is dispatched to the conversation agent. See
+[SDK notes](docs/SDK-GAPS.md) and [speech recovery](docs/SPEECH-RELIABILITY.md).
+
+## Operations and troubleshooting
 
 ```sh
-openclaw gateway call openclaw_home_assistant.inference.get --params '{}' --json
-openclaw gateway call openclaw_home_assistant.inference.update --params '{"expected_revision":"REVISION_FROM_GET","patch":{"model":"openai/gpt-6-luna","thinking":"medium","fast":true}}' --json
-```
-
-The response shows `defaults`, `overrides`, `effective`, `source`, and a new
-`revision`. Changes apply to the next admitted turn. Existing turns keep their
-settings; conversation handles and history are preserved. A stale revision,
-invalid/disallowed model, invalid thinking/fast value, or conflicting bound
-persistent-session model lock rejects the update without changing state. Every
-turn also rechecks its own session's lock. Paired HA tokens cannot call this API.
-
-Overrides are durable plugin state scoped to the selected agent/profile. They
-take precedence over config bootstrap defaults until cleared. In a patch,
-`null` clears a field back to its bootstrap default; `"inherit"` explicitly uses
-the native agent/session preference instead. Config-file edits still use the
-normal plugin-replacement lifecycle; this API does not hot-swap agent identity,
-credentials, speech providers or plugin code. No generic agent/session settings
-are rewritten. `status.profile.conversation` reports effective voice preferences,
-not the generic session-status screen's saved defaults.
-
-### Locate a slow stage
-
-```sh
+openclaw gateway call openclaw_home_assistant.status --params '{}' --json
 openclaw gateway call openclaw_home_assistant.diagnostics --params '{"limit":10}' --json
+openclaw gateway call openclaw_home_assistant.inference.get --params '{}' --json
 ```
 
-This owner-only view returns at most 32 jobs, without prompts, transcripts,
-audio, credentials, or session/client IDs. It includes per-turn inference
-revision/settings, observed model when the native hook supplies it, and bounded
-monotonic timings. See [timing semantics](docs/TIMING.md). HA's diagnostics add
-a separate bounded ring of local first-text/first-audio receive times.
+These are owner/admin methods; the HA token cannot administer models or clients.
+Status reports each stage independently. Missing OC TTS does not disable text
+conversation. Successful operations verify stages; configured credentials alone
+are not proof of account access. Diagnostics exclude prompts, transcripts, audio
+and credentials. [Inference updates](docs/PROTOCOL.md) change the next turn's
+model/thinking/fast preferences without reloading or rewriting saved session
+preferences; admitted work keeps its original settings.
 
-- [Installation/upgrade/rollback](docs/INSTALL.md)
-- [Wire contract, limits, retention and recovery](docs/PROTOCOL.md)
-- [Executed checks and remaining gates](docs/ACCEPTANCE.md)
-- [Native speech SDK gap](docs/SDK-GAPS.md)
-- [Detailed development baseline](planning/00-README.md)
-- [Current checkpoint](implementation/STATUS.md)
+Speech recovery is bounded, never replays a conversation/device action and never
+retries TTS after partial output. Native batch STT retains OC's own retry policy.
+Generated audio, delivery to HA and audible playback are separate outcomes.
 
-All eight owner RPC methods and their parameters are listed in the protocol.
-Issue a one-use pairing code through `openclaw_home_assistant.pairing.issue` and
-enter it in HA; never enter the owner token or provider key there.
+- [Product setup and mixed pipelines](docs/PRODUCT.md)
+- [Native HA Assist tools](docs/NATIVE-ASSIST.md)
+- [Protocol, limits and recovery](docs/PROTOCOL.md)
+- [Logging](docs/LOGGING.md) and [timing semantics](docs/TIMING.md)
 
 ## Development
 
-Tested on OC 2026.10.3, Node 24.18.1, HA 2026.10.4, Python 3.14.10 and FFmpeg 7.1.5.
-Other versions are not implicitly certified. FFmpeg is required only for OpenClaw-backed TTS normalization; its absence does not disable pairing, conversation or STT.
-Use the matching public OC package as a development dependency (the runtime
-package is not bundled). No production vendor SDK dependencies are added.
+CI validates stock OC 2026.10.3 and 2026.10.10. Local native-pair evidence uses
+Node 24.22.2, HA 2026.10.4 / Python 3.14.10 and FFmpeg 7.1.5 on Linux.
 
 ```sh
-npm install --no-save --package-lock=false --ignore-scripts openclaw@2026.10.3
+npm install --no-save --package-lock=false --ignore-scripts openclaw@2026.10.10
+npm run check
 npm test
 npm run test:native-pair
 ```
 
 The native proof requires the sibling `../home-assistant-openclaw-voice` checkout
-with its `.venv`, plus `openclaw` and `ffmpeg` on PATH. It creates only disposable
-loopback config/state, synthetic provider endpoints and hardware fixtures. It
-strips ambient provider credentials and terminates its own Gateway process group.
-`OPENCLAW_PROOF_CLI` selects the tested CLI. No real audio or live service is used.
+with its `.venv`, plus `openclaw` and `ffmpeg` on PATH. It creates disposable
+loopback config/state and synthetic providers/devices, strips ambient provider
+credentials and terminates its own Gateway. `OPENCLAW_PROOF_CLI` selects the CLI.
+It does not contact real provider accounts or operate household devices.
 
-Package locally with `npm pack --ignore-scripts --pack-destination /review/path`.
-The files allowlist excludes tests, development dependencies and fixture state.
-No npm publication or public GitHub release has been performed.
+Package with `npm pack --ignore-scripts --pack-destination /review/path`.
+The allowlist excludes tests, dependencies and fixture state. See
+[engineering history](implementation/STATUS.md) for earlier candidate evidence.
 
-Original code is MIT. See [provenance](THIRD_PARTY_NOTICES.md); runtime dependencies
-retain their own licenses. No community application source was copied.
+### Repository rename and license
 
-## Native HA Assist tools (candidate dev.3)
+Renamed from `openclaw-home-assistant` to `homeassistant-assist`. The package name,
+plugin ID `openclaw-home-assistant`, config keys, API paths and state layout are
+unchanged; the rename alone needs no reinstall or re-pairing.
 
-The [native Assist bridge](docs/NATIVE-ASSIST.md) forwards HA’s own prompt/tool API and executes callbacks through HA’s ChatLog. Enable Device control in HA options; allow the `home_assistant` tool in the selected agent’s policy. No MCP or SSH dependency. Existing entries keep control disabled until explicitly selected. Local-first pipeline choices remain untouched.
-
-### Stale conversation recovery
-
-Bridge dev.7 and HA dev.4 recover a retained native satellite chat ID after
-voice-profile change or expiry, without replacing native session/history.
-Recovery is bounded to one explicit pre-admission refresh/reopen; known or
-uncertain admitted work never redispatches. See [protocol](docs/PROTOCOL.md).
-
-### Structured diagnostics
-
-The logging candidate adds consistent bounded lifecycle/error logs across both
-products, persistent safe failure summaries, cross-layer request/job correlation,
-and diagnostics readable during startup/storage failure. No transcript/audio/key
-logging is enabled. Bounded speech retry is described below. See [logging contract](docs/LOGGING.md).
-
-## Speech retry and health logging
-
-Speech recovery has one owner and at most one additional bridge attempt per eligible streaming STT/TTS job. There is no whole-pipeline replay or retry after partial TTS output. Batch-only setups keep native OpenClaw retry policy without an added bridge retry. Successful health polling stays DEBUG; availability transitions and real voice work remain visible. See [speech reliability](docs/SPEECH-RELIABILITY.md) for eligibility, cancellation, native SDK limits and diagnostic metadata.
+Original code is MIT: [LICENSE](LICENSE), [provenance](THIRD_PARTY_NOTICES.md).
+Runtime dependencies retain their own licenses.
