@@ -48,7 +48,7 @@ engine, MCP server or SSH bridge is required.
 | --- | --- |
 | Home Assistant Core | **2026.10.4**; older HA releases are not supported |
 | OpenClaw | **2026.10.3**; older OC releases are not supported |
-| This project's pair | OpenClaw plugin **0.0.2** + HA integration **0.0.1**, protocol **1.2** |
+| This project's pair | OpenClaw plugin **0.0.3** + HA integration **0.0.1**, protocol **1.2** |
 | Node.js on the OC host | For the tested Node 24 line, **24.16.0 or newer within 24.x**; follow OC's own engine requirements, not just the plugin's looser metadata |
 | Python on the HA host | **3.14.2+**, normally managed by HA OS/Container; not a separate install step on those systems |
 | FFmpeg on the OC host | Required **only for OC-backed TTS**; not needed for conversation, OC STT or HA-native TTS. Version 7.1.5 was exercised; no older FFmpeg minimum has been established |
@@ -68,22 +68,22 @@ and [acceptance evidence](docs/ACCEPTANCE.md).
 
 ## Install and connect
 
-Current plugin release: **0.0.2** (job lifecycle reliability fixes), compatible
+Current plugin release: **0.0.3** (job lifecycle reliability fixes), compatible
 with HA integration **0.0.1** (dev.7 implementation), protocol **1.2**.
 No HA upgrade or re-pairing is required for this plugin update.
 See [release notes](docs/RELEASE-NOTES.md).
 
-- [OpenClaw plugin archive and checksums](https://github.com/lordratner/homeassistant-assist/releases/tag/0.0.2)
+- [OpenClaw plugin archive and checksums](https://github.com/lordratner/homeassistant-assist/releases/tag/0.0.3)
 - [HA integration release](https://github.com/lordratner/openclaw-assist-bridge/releases/tag/0.0.1)
 
 The plugin is distributed through GitHub Releases, **not npm**. Download and
 verify the versioned archive, then install it on the **OC host**:
 
 ```sh
-curl -fLO https://github.com/lordratner/homeassistant-assist/releases/download/0.0.2/lordratner-openclaw-home-assistant-0.0.2.tgz
-curl -fLO https://github.com/lordratner/homeassistant-assist/releases/download/0.0.2/SHA256SUMS
+curl -fLO https://github.com/lordratner/homeassistant-assist/releases/download/0.0.3/lordratner-openclaw-home-assistant-0.0.3.tgz
+curl -fLO https://github.com/lordratner/homeassistant-assist/releases/download/0.0.3/SHA256SUMS
 sha256sum -c SHA256SUMS
-openclaw plugins install --no-enable ./lordratner-openclaw-home-assistant-0.0.2.tgz
+openclaw plugins install --no-enable ./lordratner-openclaw-home-assistant-0.0.3.tgz
 ```
 
 Follow normal installation-policy review. Merge these settings into your OC

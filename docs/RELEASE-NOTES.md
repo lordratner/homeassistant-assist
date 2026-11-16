@@ -1,6 +1,10 @@
 # Release notes
 
-## 0.0.2 — 2026-11-16
+## 0.0.3 — 2026-11-16
+
+The 0.0.2 tag was an unreleased candidate: CI exposed a timing assumption in a
+cancellation regression. 0.0.3 gates fault injection on provider startup; runtime
+fixes are unchanged. The earlier tag is preserved, not retargeted.
 
 Plugin-only reliability update; compatible with HA integration 0.0.1 and protocol
 1.2. No core patch, HA upgrade, re-pairing, configuration migration, or new

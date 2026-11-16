@@ -478,10 +478,12 @@ for (const kind of ["turn", "stt", "tts"]) {
 
 for (const failure of ["throw", "close", "error", "stall"]) {
   test(`HTTP upload ${failure} cancels owned work instead of leaving it until the job deadline`, { timeout: 5000 }, async () => {
+    let providerStarted = false;
     await fixture(async ({ host, service, base, pair }) => {
       const { client_token: token } = await pair();
       let aborted = false;
       host.transcribe = async (_audio, { signal }) => {
+        providerStarted = true;
         await new Promise((_, reject) => signal.addEventListener("abort", () => { aborted = true; reject(signal.reason); }, { once: true }));
       };
       const response = await upload(base, token, "/stt", sttInput());
@@ -494,7 +496,9 @@ for (const failure of ["throw", "close", "error", "stall"]) {
     }, { waitMs: 15, heartbeatMs: 25 }, (response) => {
       const write = response.write.bind(response);
       response.write = (line) => {
-        if (!line.includes('"keepalive"')) return write(line);
+        // Admission can emit a keepalive before the running commit/provider starts.
+        // Inject only after startup: this regression checks cancellation of active work.
+        if (!providerStarted || !line.includes('"keepalive"')) return write(line);
         if (failure === "throw") throw new Error("synthetic write failure");
         if (failure === "close") response.destroy();
         if (failure === "error") process.nextTick(() => response.emit("error", new Error("synthetic output error")));
