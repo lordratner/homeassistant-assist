@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer, request as httpRequest } from "node:http";
 import { once } from "node:events";
+import { setTimeout as delay } from "node:timers/promises";
 import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -10,7 +11,7 @@ import { StateFile } from "../src/state-file.mjs";
 import { requestId } from "../src/request-identity.mjs";
 import { AssistTools, ASSIST_BINDING } from "../src/assist-tools.mjs";
 
-async function fixture(run) {
+async function fixture(run, jobsOptions = {}, responseHook = () => {}) {
   let turns = 0, creations = 0;
   const sessions = new Map(), synthesis = [], receivedAudio = [], inferences = [];
   const wave = Buffer.alloc(44 + 14400);
@@ -46,13 +47,14 @@ async function fixture(run) {
     close() {},
   };
   const state = new StateFile(join(await mkdtemp(join(tmpdir(), "ha-http-")), "state.json"));
-  let service = new HomeAssistantService({ host, state, jobsOptions: { maxJobMs: 3000, waitMs: 1000 } });
+  let service = new HomeAssistantService({ host, state, jobsOptions: { maxJobMs: 3000, waitMs: 1000, ...jobsOptions } });
   const replaceProfile = async (revision) => {
     await service.stop();
     host.profile = { ...host.profile, revision };
-    service = new HomeAssistantService({ host, state, jobsOptions: { maxJobMs: 3000, waitMs: 1000 } });
+    service = new HomeAssistantService({ host, state, jobsOptions: { maxJobMs: 3000, waitMs: 1000, ...jobsOptions } });
   };
   const server = createServer(async (request, response) => {
+    responseHook(response);
     try { if (!await service.handle(request, response)) { response.writeHead(404); response.end(); } }
     catch { response.destroy(); }
   });
@@ -68,7 +70,7 @@ async function fixture(run) {
     assert.equal(response.status, 200);
     return response.json();
   };
-  try { await run({ service, host, base, call, pair, synthesis, receivedAudio, inferences, replaceProfile, turns: () => turns }); }
+  try { await run({ service, host, base, call, pair, state, synthesis, receivedAudio, inferences, replaceProfile, turns: () => turns }); }
   finally { await service.stop(); server.closeAllConnections(); await new Promise((done) => server.close(done)); }
 }
 
@@ -394,5 +396,136 @@ test("revoked clients cannot use further endpoints and active response authority
     assert.throws(() => lease.assertCurrent());
     lease.release();
     assert.equal((await call("/capabilities", { token: client.client_token })).status, 401);
+  });
+});
+
+const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
+const sttInput = () => [
+  { type: "start", ...control({ request_id: requestId(), language: "en", encoding: "pcm_s16le", sample_rate: 16000, channels: 1 }) },
+  { type: "audio", sequence: 1, audio: "AAA=" }, { type: "end", sequence: 2 },
+].map((frame) => JSON.stringify(frame) + "\n").join("");
+const upload = (base, token, path, body) => fetch(base + path, { method: "POST",
+  headers: { authorization: "Bearer " + token, "content-type": "application/x-ndjson" }, body, signal: AbortSignal.timeout(4000) });
+
+test("HTTP retry during durable admission waits for live ownership and executes once", { timeout: 5000 }, async () => {
+  await fixture(async ({ service, call, pair, state, turns }) => {
+    const { client_token: token } = await pair();
+    const conversation = await (await call("/conversations", { token, data: control({ ha_conversation_id: "publication", mode: "persistent" }) })).json();
+    const data = control({ request_id: requestId(), conversation_handle: conversation.conversation_handle, text: "Only once" });
+    const durable = deferred(), release = deferred(), retried = deferred();
+    const transaction = state.transaction.bind(state), lookup = service.jobs.lookup.bind(service.jobs);
+    state.transaction = async (fn) => {
+      const result = await transaction(fn);
+      if (result?.duplicate === false && result.status === "accepted") { durable.resolve(); await release.promise; }
+      return result;
+    };
+    const original = call("/turns", { token, data });
+    await durable.promise;
+    service.jobs.lookup = (...args) => { retried.resolve(); return lookup(...args); };
+    const retry = call("/turns", { token, data });
+    try { await retried.promise; await delay(30); } finally { release.resolve(); }
+    const responses = await Promise.all([original, retry]);
+    const bodies = await Promise.all(responses.map((response) => response.text()));
+    for (let i = 0; i < responses.length; i++) {
+      assert.equal(responses[i].status, 200, bodies[i]);
+      const frames = bodies[i].trim().split("\n").map(JSON.parse);
+      assert.equal(frames.at(-1).type, "done");
+    }
+    assert.equal(responses[0].headers.get("x-openclaw-job-id"), responses[1].headers.get("x-openclaw-job-id"));
+    assert.equal(turns(), 1);
+  });
+});
+
+for (const kind of ["turn", "stt", "tts"]) {
+  test(`HTTP quiet ${kind} sends valid keepalives and completes normally`, { timeout: 5000 }, async () => {
+    await fixture(async ({ host, base, call, pair }) => {
+      const { client_token: token } = await pair();
+      const method = kind === "turn" ? "runTurn" : kind === "stt" ? "transcribe" : "speechHost";
+      if (kind === "tts") {
+        const speech = host.speechHost();
+        const buffer = speech.buffer;
+        speech.buffer = async (...args) => { await delay(100); return buffer(...args); };
+        host.speechHost = () => speech;
+      } else {
+        const original = host[method];
+        host[method] = async (...args) => { await delay(100); return original(...args); };
+      }
+      let response;
+      if (kind === "turn") {
+        const conversation = await (await call("/conversations", { token, data: control({ ha_conversation_id: "quiet", mode: "persistent" }) })).json();
+        response = await call("/turns", { token, data: control({ request_id: requestId(), conversation_handle: conversation.conversation_handle, text: "Hello" }) });
+      } else {
+        const body = kind === "stt" ? sttInput() : [
+          { type: "start", ...control({ request_id: requestId(), language: "en" }) },
+          { type: "text", sequence: 1, text: "Hello." }, { type: "end", sequence: 2 },
+        ].map((frame) => JSON.stringify(frame) + "\n").join("");
+        response = await upload(base, token, "/" + kind, body);
+      }
+      assert.equal(response.status, 200);
+      const frames = (await response.text()).trim().split("\n").map(JSON.parse);
+      assert.ok(frames.some((event) => event.phase === "keepalive"));
+      assert.deepEqual(frames.map((event) => event.sequence), frames.map((_, i) => i + 1));
+      assert.equal(frames.at(-1).type, "done");
+      for (const event of frames) {
+        assert.equal(event.protocol_major, 1);
+        assert.equal(event.job_id, response.headers.get("x-openclaw-job-id"));
+        assert.equal(event.request_id, response.headers.get("x-openclaw-request-id"));
+        assert.equal(event.profile_revision, "r1");
+      }
+    }, { waitMs: 15, heartbeatMs: 25 });
+  });
+}
+
+for (const failure of ["throw", "close", "error", "stall"]) {
+  test(`HTTP upload ${failure} cancels owned work instead of leaving it until the job deadline`, { timeout: 5000 }, async () => {
+    await fixture(async ({ host, service, base, pair }) => {
+      const { client_token: token } = await pair();
+      let aborted = false;
+      host.transcribe = async (_audio, { signal }) => {
+        await new Promise((_, reject) => signal.addEventListener("abort", () => { aborted = true; reject(signal.reason); }, { once: true }));
+      };
+      const response = await upload(base, token, "/stt", sttInput());
+      await assert.rejects(response.text());
+      const authority = await service.clients.authenticate(token, "stt");
+      const status = await service.jobs.wait(authority.id, response.headers.get("x-openclaw-job-id"));
+      assert.equal(status.status, "cancelled");
+      assert.equal(status.cancellation_confirmed, false);
+      assert.equal(aborted, true);
+    }, { waitMs: 15, heartbeatMs: 25 }, (response) => {
+      const write = response.write.bind(response);
+      response.write = (line) => {
+        if (!line.includes('"keepalive"')) return write(line);
+        if (failure === "throw") throw new Error("synthetic write failure");
+        if (failure === "close") response.destroy();
+        if (failure === "error") process.nextTick(() => response.emit("error", new Error("synthetic output error")));
+        return false;
+      };
+    });
+  });
+}
+
+test("failed conversation output preserves same-job completion without another execution", { timeout: 5000 }, async () => {
+  await fixture(async ({ host, service, call, pair }) => {
+    const { client_token: token } = await pair();
+    const conversation = await (await call("/conversations", { token, data: control({ ha_conversation_id: "recover", mode: "persistent" }) })).json();
+    let calls = 0;
+    host.runTurn = async () => { calls++; await delay(100); return { result: { text: "Recovered" } }; };
+    const data = control({ request_id: requestId(), conversation_handle: conversation.conversation_handle, text: "one" });
+    const response = await call("/turns", { token, data });
+    await assert.rejects(response.text());
+    const authority = await service.clients.authenticate(token, "conversation");
+    const status = await service.jobs.wait(authority.id, response.headers.get("x-openclaw-job-id"));
+    assert.equal(status.status, "completed");
+    assert.equal(status.result.text, "Recovered");
+    const retry = await call("/turns", { token, data });
+    // The replay includes the synthetic failing keepalive; status remains the recovery authority.
+    await retry.text().catch(() => {});
+    assert.equal(calls, 1);
+  }, { waitMs: 15, heartbeatMs: 25 }, (response) => {
+    const write = response.write.bind(response);
+    response.write = (line) => {
+      if (line.includes('"keepalive"')) throw new Error("synthetic stream failure");
+      return write(line);
+    };
   });
 });

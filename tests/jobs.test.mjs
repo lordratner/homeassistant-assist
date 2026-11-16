@@ -299,3 +299,111 @@ test("same-process generation owners share receipts, active limits and replay wi
   assert.equal((await second.wait("client-a", next.job_id)).result, "new owner");
   await second.stop();
 });
+
+for (const read of ["lookup", "status", "unrelated lookup", "commit"]) {
+  test(`pending admission survives concurrent ${read} from another generation`, { timeout: 5000 }, async () => {
+    const f = await setup();
+    const peer = new Jobs({ ...f.options, state: new StateFile(f.path) });
+    const running = deferred(), finish = deferred();
+    const older = await peer.admit(f.input(async () => { running.resolve(); await finish.promise; }));
+    peer.start("client-a", older.job_id);
+    await running.promise;
+    const durable = deferred(), release = deferred();
+    const transaction = f.jobs.state.transaction.bind(f.jobs.state);
+    f.jobs.state.transaction = async (fn) => {
+      const result = await transaction(fn);
+      if (result?.duplicate === false && result.status === "accepted") {
+        durable.resolve(result); await release.promise;
+      }
+      return result;
+    };
+    let calls = 0;
+    const input = f.input(async () => { calls++; return { result: "one" }; });
+    const admission = f.jobs.admit(input);
+    try {
+      const saved = await durable.promise;
+      const observation = read === "lookup" ? peer.lookup(input) : read === "status" ? peer.status("client-a", saved.job_id) :
+        read === "unrelated lookup" ? peer.lookup(f.input(async () => {})) : peer.wait("client-a", older.job_id);
+      if (read === "commit") finish.resolve();
+      // Leave a deterministic publication gap; the read may wait, but must not recover the pending owner.
+      await delay(30);
+      release.resolve();
+      await observation;
+      const receipt = await admission;
+      assert.equal((await peer.status("client-a", receipt.job_id)).status, "accepted");
+      f.jobs.start("client-a", receipt.job_id);
+      assert.equal((await f.jobs.wait("client-a", receipt.job_id)).status, "completed");
+      assert.equal(calls, 1);
+    } finally {
+      release.resolve(); finish.resolve();
+      await admission;
+      await peer.wait("client-a", older.job_id);
+      await f.jobs.stop(); await peer.stop();
+    }
+  });
+}
+
+for (const kind of ["turn", "stt", "tts"]) {
+  test(`quiet ${kind} stays connected with sequenced keepalives past the reader timeout`, { timeout: 3000 }, async () => {
+    const f = await setup({ waitMs: 15, heartbeatMs: 25 });
+    const receipt = await f.jobs.admit(f.input(async () => { await delay(100); return { result: "ok" }; }, { kind }));
+    const stream = f.jobs.events("client-a", receipt.job_id);
+    f.jobs.start("client-a", receipt.job_id);
+    try {
+      const frames = await collect(stream);
+      assert.ok(frames.some((event) => event.type === "phase" && event.phase === "keepalive"));
+      assert.deepEqual(frames.map((event) => event.sequence), frames.map((_, i) => i + 1));
+      assert.equal(frames.at(-1).type, "done");
+      assert.equal((await f.jobs.wait("client-a", receipt.job_id)).status, "completed");
+    } finally { await stream.return(); await f.jobs.stop(); }
+  });
+}
+
+test("keepalives are shared replay events, do not mark partial output, and stop at the job deadline", { timeout: 3000 }, async () => {
+  const f = await setup({ heartbeatMs: 10, maxJobMs: 80 });
+  const receipt = await f.jobs.admit(f.input(async ({ signal }) => {
+    await new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+  }));
+  const first = f.jobs.events("client-a", receipt.job_id);
+  const second = f.jobs.events("client-a", receipt.job_id);
+  f.jobs.start("client-a", receipt.job_id);
+  const a = [], b = [];
+  const drain = async (stream, frames) => { for await (const frame of stream) frames.push(frame); };
+  await Promise.all([assert.rejects(drain(first, a), /job_output_cancelled/), assert.rejects(drain(second, b), /job_output_cancelled/)]);
+  assert.ok(a.some((frame) => frame.phase === "keepalive"));
+  assert.deepEqual(a, b);
+  const status = await f.jobs.wait("client-a", receipt.job_id);
+  assert.equal(status.code, "job_timeout");
+  assert.equal(status.partial_output, false);
+  await f.jobs.stop();
+});
+
+test("a genuinely stalled subscriber still fails bounded backpressure", { timeout: 3000 }, async () => {
+  const f = await setup({ replayBytes: 700, waitMs: 15 });
+  const receipt = await f.jobs.admit(f.input(async ({ emit }) => {
+    for (let i = 0; i < 8; i++) await emit({ type: "text_delta", text: "x".repeat(80) });
+  }));
+  const stalled = f.jobs.events("client-a", receipt.job_id);
+  f.jobs.start("client-a", receipt.job_id);
+  const status = await f.jobs.wait("client-a", receipt.job_id);
+  assert.equal(status.code, "slow_consumer");
+  await stalled.return(); await f.jobs.stop();
+});
+
+test("failed admission does not poison ownership serialization or mask real recovery", async () => {
+  const f = await setup();
+  const read = f.jobs.state.read.bind(f.jobs.state);
+  let fail = true;
+  f.jobs.state.read = (reader) => {
+    if (fail) { fail = false; return Promise.reject(new Error("synthetic read failure")); }
+    return read(reader);
+  };
+  const input = f.input(async () => assert.fail("abandoned work must not run"));
+  await assert.rejects(f.jobs.admit(input), /synthetic read failure/);
+  const status = await f.jobs.lookup(input);
+  assert.equal(status.status, "interrupted");
+  const next = await f.jobs.admit(f.input(async () => ({ result: "new" })));
+  f.jobs.start("client-a", next.job_id);
+  assert.equal((await f.jobs.wait("client-a", next.job_id)).status, "completed");
+  await f.jobs.stop();
+});

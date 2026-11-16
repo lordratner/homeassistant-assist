@@ -1,7 +1,8 @@
 # Compatibility and evidence boundaries
 
-Public pair 0.0.1 / 0.0.1, protocol 1.2, based on plugin dev.11 and HA dev.7.
-This initial release is not a universal-provider certification or a formal
+Public pair: plugin 0.0.2 / HA integration 0.0.1, protocol 1.2. Plugin 0.0.2
+adds lifecycle reliability fixes to the dev.11 implementation; HA remains dev.7.
+This release is not a universal-provider certification or a formal
 Home Assistant quality tier.
 
 ## Declared baseline

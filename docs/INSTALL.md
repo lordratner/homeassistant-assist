@@ -4,7 +4,7 @@ Source: [Home Assistant Assist plugin](https://github.com/lordratner/homeassista
 The repository rename does not change the `openclaw_voice` domain, existing
 pairings, or the companion plugin ID. No identifier migration is needed.
 
-The public pair is plugin **0.0.1** (dev.11 implementation) and HA integration
+The public pair is plugin **0.0.2** (lifecycle reliability fixes) and HA integration
 **0.0.1** (dev.7 implementation), protocol **1.2**. Download versioned artifacts
 from the repositories' Releases pages. The plugin is distributed as a GitHub
 release archive, not an npm package. No core patch is bundled or required for
@@ -36,14 +36,14 @@ see [compatibility](COMPATIBILITY.md). Installation does not change Assist pipel
 ## OC installation
 
 Download the plugin archive and checksum file from
-[release 0.0.1](https://github.com/lordratner/homeassistant-assist/releases/tag/0.0.1),
+[release 0.0.2](https://github.com/lordratner/homeassistant-assist/releases/tag/0.0.2),
 verify the checksum, then install without silently enabling it:
 
 ```sh
-curl -fLO https://github.com/lordratner/homeassistant-assist/releases/download/0.0.1/lordratner-openclaw-home-assistant-0.0.1.tgz
-curl -fLO https://github.com/lordratner/homeassistant-assist/releases/download/0.0.1/SHA256SUMS
+curl -fLO https://github.com/lordratner/homeassistant-assist/releases/download/0.0.2/lordratner-openclaw-home-assistant-0.0.2.tgz
+curl -fLO https://github.com/lordratner/homeassistant-assist/releases/download/0.0.2/SHA256SUMS
 sha256sum -c SHA256SUMS
-openclaw plugins install --no-enable ./lordratner-openclaw-home-assistant-0.0.1.tgz
+openclaw plugins install --no-enable ./lordratner-openclaw-home-assistant-0.0.2.tgz
 ```
 
 Use the normal installation-policy review; do not bypass a rejection. Preserve

@@ -56,3 +56,15 @@ test("writer waits for drain and does not leak listeners on close", async () => 
   await assert.rejects(failing, /output_closed/);
   assert.equal(output.listenerCount("drain"), 0);
 });
+
+test("stalled writes time out or abort and always release transport listeners", async () => {
+  class Output extends EventEmitter { write() { return false; } }
+  const output = new Output();
+  await assert.rejects(writeFrame(output, { type: "phase" }, { waitMs: 10 }), /slow_consumer/);
+  assert.equal(output.eventNames().length, 0);
+  const abort = new AbortController();
+  const pending = writeFrame(output, { type: "phase" }, { signal: abort.signal });
+  abort.abort(new Error("revoked"));
+  await assert.rejects(pending, /revoked/);
+  assert.equal(output.eventNames().length, 0);
+});

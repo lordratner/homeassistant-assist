@@ -91,7 +91,7 @@ Every event contains `protocol_major`, `profile_revision`, `request_id`, `job_id
 monotonically contiguous `sequence`, and `type`. Optional response headers
 `X-OpenClaw-Job-ID` and `X-OpenClaw-Request-ID` identify accepted work early.
 
-- `phase`: running.
+- `phase`: `running` or `keepalive`; informational, not speakable output.
 - `model`: observed actual provider/model, not a guessed pre-hook selection.
 - `text_delta`: `message_id`, speakable assistant `text`; multiple assistant
   messages are separated by HA without repeating earlier text.
@@ -101,6 +101,23 @@ monotonically contiguous `sequence`, and `type`. Optional response headers
 - `audio_end`: segment complete.
 - `done`: stage-specific completion metadata; not proof of audible playback.
 - `error` / `cancelled`: terminal failure/cancellation; never read raw exceptions aloud.
+
+While a subscribed job is quiet, the server emits a sequenced `phase: keepalive`
+after twenty seconds without a new event. These frames share the bounded replay
+journal, coalesce across readers, and do not extend the five-minute execution
+deadline or count as partial output. Existing HA clients already ignore phase
+frames; the interval stays below their sixty-second socket-read deadline.
+The thirty-second slow-consumer limit applies to blocked journal producers and
+blocked HTTP writes, not to healthy readers waiting for work. Write waits also
+honor disconnect/revocation. Any failed STT/TTS upload response explicitly requests
+cancellation of that job; a failed conversation response preserves same-job
+recovery. Cancellation remains unconfirmed for remote/provider work.
+
+Admission, live-owner publication, and recovery-capable state operations share
+one same-process ownership queue. A concurrent retry, status read, or unrelated
+commit cannot mistake a pending admission for work abandoned by a dead process.
+Failed admissions release the queue; genuinely ownerless receipts still recover
+as interrupted and are never redispatched automatically.
 
 Durable UUIDv7 receipts bind caller, request ID, kind, profile and canonical
 payload fingerprint. Conflicting payload reuse fails. A duplicate turn never

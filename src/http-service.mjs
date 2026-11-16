@@ -338,22 +338,26 @@ export class HomeAssistantService {
     this.diagnostics.current()?.annotate({ job_id: admission.job_id, request_id: admission.request_id, admitted: true });
     const output = new AbortController();
     const signal = AbortSignal.any([authority.signal, output.signal]);
-    let stream;
-    try { stream = this.jobs.events(authority.id, admission.job_id, after, signal); }
-    catch (error) {
-      if (error.code === "job_not_found") throw Object.assign(new JobError("replay_unavailable"), { jobId: admission.job_id });
-      throw error;
-    }
+    let stream, cancellation;
+    const cancelUpload = () => {
+      if (!cancelOnDisconnect) return;
+      return cancellation ??= this.jobs.cancel(authority.id, admission.job_id).catch((error) => {
+        this.diagnostics.event("http", "disconnect_cancel", "cleanup_failed", failureSummary(error, { job_id: admission.job_id, stage: "cleanup" }), "warn");
+      });
+    };
     const onClose = () => {
       if (response.writableEnded) return;
       output.abort();
       this.diagnostics.event("http", "output", "disconnected", { job_id: admission.job_id, request_id: admission.request_id });
-      if (cancelOnDisconnect) void this.jobs.cancel(authority.id, admission.job_id).catch((error) => {
-        this.diagnostics.event("http", "disconnect_cancel", "cleanup_failed", failureSummary(error, { job_id: admission.job_id, stage: "cleanup" }), "warn");
-      });
+      void cancelUpload();
     };
     response.on("close", onClose);
     try {
+      try { stream = this.jobs.events(authority.id, admission.job_id, after, signal); }
+      catch (error) {
+        if (error.code === "job_not_found") throw Object.assign(new JobError("replay_unavailable"), { jobId: admission.job_id });
+        throw error;
+      }
       authority.assertCurrent();
       this.jobs.start(authority.id, admission.job_id);
       if (response.destroyed) onClose();
@@ -363,12 +367,19 @@ export class HomeAssistantService {
       response.flushHeaders();
       for await (const event of stream) {
         authority.assertCurrent();
-        await writeFrame(response, event);
+        await writeFrame(response, event, { signal, waitMs: this.jobs.waitMs });
       }
       response.end();
+    } catch (error) {
+      // The outer handler destroys the response after our close listener is
+      // removed. Explicitly cancel one-shot uploads on every stream failure;
+      // turns keep their same-job recovery path and must not be redispatched.
+      output.abort(error);
+      await cancelUpload();
+      throw error;
     } finally {
       response.off("close", onClose);
-      await stream.return();
+      await stream?.return();
     }
     return true;
   }

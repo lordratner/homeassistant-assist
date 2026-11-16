@@ -60,17 +60,26 @@ export async function readSpeechRequest(input, profileRevision) {
   return { header: first, text: text() };
 }
 
-export async function writeFrame(output, event) {
+export async function writeFrame(output, event, { signal, waitMs = 30000 } = {}) {
+  signal?.throwIfAborted();
   if (output.destroyed || output.writableEnded) throw new ProtocolError("output_closed");
   const { bytes, ...value } = event;
   const line = JSON.stringify(bytes ? { ...value, audio: Buffer.from(bytes).toString("base64") } : value) + "\n";
   if (Buffer.byteLength(line) > 65536) throw new ProtocolError("frame_limit");
   if (output.write(line)) return;
   await new Promise((resolve, reject) => {
-    const cleanup = () => { output.off("drain", drain); output.off("close", close); output.off("error", error); };
+    const cleanup = () => {
+      clearTimeout(timer);
+      output.off("drain", drain); output.off("close", close); output.off("error", error);
+      signal?.removeEventListener("abort", abort);
+    };
     const drain = () => { cleanup(); resolve(); };
     const close = () => { cleanup(); reject(new ProtocolError("output_closed")); };
     const error = () => { cleanup(); reject(new ProtocolError("output_failed")); };
+    const abort = () => { cleanup(); reject(signal.reason); };
+    const timer = setTimeout(() => { cleanup(); reject(new ProtocolError("slow_consumer")); }, waitMs);
     output.once("drain", drain); output.once("close", close); output.once("error", error);
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
   });
 }

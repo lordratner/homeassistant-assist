@@ -25,12 +25,12 @@ export class Jobs {
   constructor({ state, agentId, profileId, clock = Date.now, retentionMs = 86400000,
     resultTtlMs = 3600000, maxRecords = 2048, maxActive = 16, maxPerClient = 4,
     maxRetained = 64, replayBytes = 1048576, resultBytes = 1048576,
-    maxJobMs = 300000, waitMs = 30000, diagnostics = new Diagnostics() }) {
+    maxJobMs = 300000, waitMs = 30000, heartbeatMs = 20000, diagnostics = new Diagnostics() }) {
     if (!agentId || !profileId || [retentionMs, resultTtlMs, maxRecords, maxActive,
-      maxPerClient, maxRetained, replayBytes, resultBytes, maxJobMs, waitMs].some((v) => !Number.isSafeInteger(v) || v < 1) || maxRetained < maxActive)
+      maxPerClient, maxRetained, replayBytes, resultBytes, maxJobMs, waitMs, heartbeatMs].some((v) => !Number.isSafeInteger(v) || v < 1) || maxRetained < maxActive)
       throw new TypeError("invalid_job_limits");
     Object.assign(this, { state, clock, retentionMs, resultTtlMs, maxRecords, maxActive,
-      maxPerClient, maxRetained, replayBytes, resultBytes, maxJobMs, waitMs, observer: diagnostics });
+      maxPerClient, maxRetained, replayBytes, resultBytes, maxJobMs, waitMs, heartbeatMs, observer: diagnostics });
     this.namespace = "jobs:" + fingerprint([agentId, profileId]);
     let stateIdentity = state.identity ?? anonymousStores.get(state);
     if (!stateIdentity) { stateIdentity = randomUUID(); anonymousStores.set(state, stateIdentity); }
@@ -41,10 +41,21 @@ export class Jobs {
     this.#live = this.#scope.live;
   }
 
+  // Recovery must not inspect a committed receipt until its live owner is
+  // published. Include commits: pruning there also performs recovery. This
+  // queue is shared across same-process reload generations, like the live map.
+  #serialize(operation) {
+    const pending = this.#scope.admissions.then(operation);
+    this.#scope.admissions = pending.catch(() => {});
+    return pending;
+  }
+
+  #transaction(update) {
+    return this.#serialize(() => this.state.transaction(update));
+  }
+
   admit({ principal, requestId, kind, payload, profileRevision, run, inference, timing }) {
-    const operation = this.#scope.admissions.then(() => this.#admit({ principal, requestId, kind, payload, profileRevision, run, inference, timing }));
-    this.#scope.admissions = operation.catch(() => {});
-    return operation;
+    return this.#serialize(() => this.#admit({ principal, requestId, kind, payload, profileRevision, run, inference, timing }));
   }
 
   async lookup({ principal, requestId, kind, payload, profileRevision }) {
@@ -52,7 +63,7 @@ export class Jobs {
     if (created > this.clock() + 300000) throw new JobError("request_clock_skew");
     if (this.clock() - created > this.retentionMs) throw new JobError("request_expired");
     const key = fingerprint([principal, requestId]), digest = fingerprint({ kind, payload, profileRevision });
-    return this.state.transaction((all) => {
+    return this.#transaction((all) => {
       const records = all[this.namespace] ?? {};
       this.#pruneRecords(records);
       const record = records[key];
@@ -97,7 +108,7 @@ export class Jobs {
       const record = await this.#record(principal, receipt.job_id);
       const job = { key, record, run, owner: this.#owner, controller: new AbortController(), journal: [],
         bytes: 0, sequence: 0, floor: 1, subscribers: new Set(), waiters: new Set(),
-        terminal: false, streamClosed: false, producedOutput: false, started: false, emitTail: Promise.resolve(), settled: null, timing };
+        terminal: false, finishing: false, streamClosed: false, producedOutput: false, started: false, emitTail: Promise.resolve(), settled: null, timing };
       job.span = this.observer.start(kind, "job", { trace_id: requestId, request_id: requestId, job_id: record.id });
       job.totalBytes = 0; job.segments = 0;
       timing.attach?.(job.span);
@@ -117,7 +128,7 @@ export class Jobs {
   }
 
   async status(principal, id) {
-    return this.state.transaction((all) => {
+    return this.#transaction((all) => {
       const records = all[this.namespace] ?? {};
       this.#pruneRecords(records);
       const record = Object.values(records).find((value) => value.id === id && value.principal === principal);
@@ -210,7 +221,7 @@ export class Jobs {
   }
 
   async #commit(job, patch) {
-    await this.state.transaction((all) => {
+    await this.#transaction((all) => {
       const record = all[this.namespace]?.[job.key];
       if (!record || record.id !== job.record.id) throw new JobError("job_receipt_lost");
       if (terminalStates.has(record.status) && patch.status === "cancel_requested") {
@@ -239,6 +250,7 @@ export class Jobs {
       job.timing.mark("job_started");
       await this.#emit(job, { type: "phase", phase: "running" });
       const output = await job.run({ signal: job.controller.signal, emit: (event) => this.#emit(job, event), timing: job.timing });
+      job.finishing = true;
       await job.emitTail;
       job.controller.signal.throwIfAborted();
       const serialized = JSON.stringify(output?.result ?? null);
@@ -254,6 +266,7 @@ export class Jobs {
       });
       job.span.finish("completed", { frames: job.sequence, bytes: job.totalBytes, segments: job.segments });
     } catch (error) {
+      job.finishing = true;
       await job.emitTail.catch((tailError) => {
         this.observer.event("job", "emit_tail", "failed", failureSummary(tailError, { stage: "http_request" }), "warn");
       });
@@ -285,8 +298,12 @@ export class Jobs {
     }
   }
 
-  #emit(job, event) {
+  #emit(job, event, idleSequence) {
     const operation = job.emitTail.then(async () => {
+      // Keepalives use the same bounded replay/sequence path as all output.
+      // Multiple readers coalesce; never queue one after work is finishing.
+      if (idleSequence !== undefined && (job.finishing || job.terminal ||
+          !job.started || job.sequence !== idleSequence || !job.subscribers.size)) return;
       job.controller.signal.throwIfAborted();
       if (job.terminal || !eventTypes.has(event?.type)) throw new JobError("invalid_job_event");
       await this.#append(job, event);
@@ -325,13 +342,17 @@ export class Jobs {
 
   #notify(job) { for (const wake of [...job.waiters]) wake(); }
 
-  #changed(job, signal) {
+  #changed(job, signal, idle = false) {
     signal?.throwIfAborted();
     return new Promise((resolve, reject) => {
       const cleanup = () => { clearTimeout(timer); job.waiters.delete(wake); signal?.removeEventListener("abort", abort); };
-      const wake = () => { cleanup(); resolve(); };
+      const wake = () => { cleanup(); resolve(true); };
       const abort = () => { cleanup(); reject(signal.reason); };
-      const timer = setTimeout(() => { cleanup(); reject(new JobError("slow_consumer")); }, this.waitMs);
+      const timer = setTimeout(() => {
+        cleanup();
+        if (idle) resolve(false);
+        else reject(new JobError("slow_consumer"));
+      }, idle ? this.heartbeatMs : this.waitMs);
       job.waiters.add(wake); signal?.addEventListener("abort", abort, { once: true });
     });
   }
@@ -363,7 +384,11 @@ export class Jobs {
           const next = job.journal.find((item) => item.frame.sequence > sub.cursor);
           if (next) { sub.cursor = next.frame.sequence; this.#notify(job); return { done: false, value: structuredClone(next.frame) }; }
           if (job.streamClosed) { close(); return { done: true, value: undefined }; }
-          await this.#changed(job, signal);
+          const sequence = job.sequence;
+          if (!await this.#changed(job, signal, true) && !sub.closed) {
+            signal?.throwIfAborted();
+            await this.#emit(job, { type: "phase", phase: "keepalive" }, sequence);
+          }
         } } catch (error) { close(error); throw error; }
         return { done: true, value: undefined };
       },
